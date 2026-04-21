@@ -11,8 +11,15 @@ import {
   AppConversationStatus,
   AppMessageDirection,
   AppLeadStatus,
-  AppLeadSource
+  AppLeadSource,
+  UserRole
 } from "@prisma/client";
+import { 
+  listAllUsers, 
+  updateUserRole, 
+  deleteUser, 
+  listAllPartners 
+} from "./admin";
 import { z } from "zod";
 import { hashPassword, verifyPassword } from "./auth";
 import { COST_PER_MESSAGE } from "./sharedTypes";
@@ -863,6 +870,14 @@ async function requireUser() {
     throw new Error("No active session. Sign in first.");
   }
 
+  return user;
+}
+
+async function requireAdmin() {
+  const user = await requireUser();
+  if (user.role !== UserRole.ADMIN) {
+    throw new Error("Unauthorized. Admin access required.");
+  }
   return user;
 }
 
@@ -2260,6 +2275,16 @@ const partnerApplySchema = z.object({
   message: z.string().optional(),
 });
 
+const partnerPublicApplySchema = z.object({
+  contactName: z.string().min(1),
+  email: z.string().email(),
+  phone: z.string().optional(),
+  companyName: z.string().optional(),
+  partnerType: z.enum(["affiliate", "reseller", "white_label", "api_integration"]),
+  message: z.string().optional(),
+  password: z.string().min(8, "Password must be at least 8 characters long."),
+});
+
 const partnerCommissionSchema = z.object({
   commissionRate: z.number().min(0).max(100),
 });
@@ -2299,6 +2324,57 @@ app.post("/partners/apply", async (req, res, next) => {
     });
 
     res.json(actionResponse(partner, { ok: true, message: "Partner application submitted successfully." }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /partners/public-apply - Apply to become a partner without existing account
+app.post("/partners/public-apply", async (req, res, next) => {
+  try {
+    const payload = partnerPublicApplySchema.parse(req.body);
+    
+    // Check if user exists
+    const existing = await prisma.user.findUnique({ where: { email: payload.email } });
+    if (existing?.passwordHash) {
+      throw new Error("An account with this email already exists. Please log in to apply as a partner.");
+    }
+    
+    // Create new workspace and user
+    const passwordHash = hashPassword(payload.password);
+    const user = existing
+      ? await prisma.user.update({
+          where: { id: existing.id },
+          data: {
+            name: payload.contactName,
+            passwordHash,
+          },
+        })
+      : await createWorkspaceForUser(prisma, { name: payload.contactName, email: payload.email, passwordHash });
+
+    // Generate a unique referral code
+    const randomChars = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const referralCode = `PRT-${randomChars}`;
+
+    const partner = await prisma.partner.create({
+      data: {
+        workspaceId: user.workspaceId,
+        userId: user.id,
+        contactName: payload.contactName,
+        email: payload.email,
+        phone: payload.phone,
+        companyName: payload.companyName,
+        partnerType: payload.partnerType,
+        message: payload.message,
+        referralCode,
+        status: "pending",
+        commissionRate: 10, // Default 10% commission
+        totalEarned: 0,
+        totalPaid: 0,
+      },
+    });
+
+    res.json(actionResponse(partner, { ok: true, message: "Partner application submitted successfully. You can now log in to check your status." }));
   } catch (error) {
     next(error);
   }
@@ -2660,6 +2736,126 @@ app.post("/partners/payouts/:id/process", async (req, res, next) => {
     ]);
 
     res.json(actionResponse(updatedPayout, { ok: true, message: "Payout processed successfully." }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── Admin Management Routes ───────────────────────────────────
+
+// GET /admin/users - List all users (Admin only)
+app.get("/admin/users", async (_req, res, next) => {
+  try {
+    await requireAdmin();
+    const users = await listAllUsers(prisma);
+    res.json({ data: users });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /admin/users/:id/role - Update user role (Admin only)
+app.patch("/admin/users/:id/role", async (req, res, next) => {
+  try {
+    await requireAdmin();
+    const { id } = req.params;
+    const { role } = z.object({ role: z.nativeEnum(UserRole) }).parse(req.body);
+    const user = await updateUserRole(prisma, id, role);
+    res.json({ data: user });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /admin/users/:id - Delete a user (Admin only)
+app.delete("/admin/users/:id", async (req, res, next) => {
+  try {
+    await requireAdmin();
+    const { id } = req.params;
+    await deleteUser(prisma, id);
+    res.json({ message: "User deleted successfully." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /admin/partners - List all partners (Admin only)
+app.get("/admin/partners", async (_req, res, next) => {
+  try {
+    await requireAdmin();
+    const partners = await listAllPartners(prisma);
+    res.json({ data: partners });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── White-Labeling & Branding Routes ──────────────────────────
+
+app.patch("/partners/branding", async (req, res, next) => {
+  try {
+    const workspaceContext = await getWorkspaceContextFromRequestAuthHeader(req.headers.authorization);
+    if (!workspaceContext) {
+      throw new Error("An active app session is required to update branding.");
+    }
+    
+    // Get the user to find their partner profile
+    const user = await prisma.user.findUnique({ where: { id: workspaceContext.userId } });
+    if (user?.role !== "PARTNER") {
+      throw new Error("Only partners can update branding.");
+    }
+    
+    const partner = await prisma.partner.findUnique({ where: { userId: user.id } });
+    if (!partner) {
+      throw new Error("Partner profile not found.");
+    }
+    
+    // Ensure we only update allowable fields
+    const { brandName, logoUrl, primaryColor, supportEmail } = req.body;
+    
+    const updated = await prisma.partner.update({
+      where: { id: partner.id },
+      data: {
+        brandName: brandName ?? null,
+        logoUrl: logoUrl ?? null,
+        primaryColor: primaryColor ?? null,
+        supportEmail: supportEmail ?? null
+      }
+    });
+
+    res.json({ data: updated });
+  } catch(e) {
+    next(e);
+  }
+});
+
+// GET /branding/:ref - Get branding by referral code or partner ID
+app.get("/branding/:ref", async (req, res, next) => {
+  try {
+    const { ref } = req.params;
+    
+    // Check if ref is a referral code or ID
+    const partner = await prisma.partner.findFirst({
+      where: {
+        OR: [
+          { referralCode: ref },
+          { id: ref }
+        ],
+        status: "approved"
+      },
+      select: {
+        brandName: true,
+        logoUrl: true,
+        primaryColor: true,
+        supportEmail: true
+      }
+    });
+
+    if (!partner || !partner.brandName) {
+      return res.json({ data: null });
+    }
+
+    res.json({ data: partner });
   } catch (error) {
     next(error);
   }

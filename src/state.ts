@@ -81,6 +81,7 @@ function buildEmptyAppState(): AppState {
     partnerStats: null,
     partnerReferrals: [],
     partnerPayouts: [],
+    branding: null,
   };
 }
 
@@ -484,8 +485,10 @@ export async function buildAppState(prisma: PrismaClient, user: User | null): Pr
 
   return {
     user: {
+      id: user.id,
       name: user.name,
       email: user.email,
+      role: user.role,
     },
     onboardingComplete: user.onboardingComplete,
     walletBalance,
@@ -682,5 +685,6 @@ export async function buildAppState(prisma: PrismaClient, user: User | null): Pr
       processedAt: payout.processedAt?.toISOString() ?? null,
       createdAt: payout.createdAt.toISOString(),
     })),
+    branding: null, // This is fetched dynamically based on referral code
   };
 }

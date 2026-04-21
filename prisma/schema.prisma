@@ -4,6 +4,8 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 
@@ -11,6 +13,12 @@ enum Plan {
   starter
   growth
   enterprise
+}
+
+enum UserRole {
+  ADMIN
+  PARTNER
+  USER
 }
 
 enum Currency {
@@ -161,6 +169,7 @@ model User {
   name               String
   email              String       @unique
   passwordHash       String?
+  role               UserRole     @default(USER)
   onboardingComplete Boolean      @default(false)
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
@@ -524,6 +533,13 @@ model Partner {
   totalEarned   Float          @default(0)
   totalPaid     Float          @default(0)
   message       String?
+  
+  // White-labeling fields
+  brandName     String?
+  logoUrl       String?
+  primaryColor  String?
+  supportEmail  String?
+  
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
