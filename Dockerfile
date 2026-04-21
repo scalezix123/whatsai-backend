@@ -13,14 +13,14 @@ COPY package.json ./
 # If there's a lockfile, copy it too
 # COPY bun.lock* ./
 
+# Copy configuration and Prisma schema
+COPY prisma.config.ts ./
+COPY prisma ./prisma/
+
 # Install dependencies
 # Prisma only needs a syntactically valid URL at build time for code generation.
 RUN DATABASE_URL=postgresql://placeholder:placeholder@127.0.0.1:5432/placeholder?schema=public \
   bun install
-
-# Copy configuration and Prisma schema
-COPY prisma.config.ts ./
-COPY prisma ./prisma/
 
 # Copy source code
 COPY src ./src
