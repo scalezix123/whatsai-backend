@@ -11,7 +11,7 @@ ENV PATH="${BUN_INSTALL}/bin:${PATH}"
 # Copy package manifests
 COPY package.json ./
 # If there's a lockfile, copy it too
-COPY bun.lock* ./
+# COPY bun.lock* ./
 
 # Install dependencies
 # Prisma only needs a syntactically valid URL at build time for code generation.
