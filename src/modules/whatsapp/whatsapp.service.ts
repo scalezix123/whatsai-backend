@@ -1,67 +1,67 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../../prisma";
+import type { ConnectWhatsAppInput } from "./whatsapp.schemas";
+import { connectWhatsAppSchema } from "./whatsapp.schemas";
+import { ConnectionStatus } from "@prisma/client";
+import { buildAppState, getCurrentUser } from "../../state";
 
-export interface WorkspaceContext {
-  workspaceId: string;
-  userId: string;
-  role: string;
-}
-
-export async function getConnectionHealth(
-  workspaceId: string,
-  db: PrismaClient
-) {
-  const connection = await db.whatsAppConnection.findFirst({
-    where: { workspaceId },
-  });
-
-  if (!connection) {
-    return {
-      status: "not_connected",
-      phoneNumberId: null,
-      displayPhoneNumber: null,
-      businessName: null,
-      tokenExpired: null,
-      tokenExpiresAt: null,
-    };
+export async function connectWhatsApp(input: ConnectWhatsAppInput) {
+  const user = await getCurrentUser(prisma);
+  if (!user) {
+    throw new Error("No active session. Sign in first.");
   }
 
-  const auth = await db.metaAuthorization.findUnique({
-    where: { workspaceId },
+  const payload = connectWhatsAppSchema.parse(input);
+
+  const existing = await prisma.whatsAppConnection.findFirst({
+    where: { workspaceId: user.workspaceId },
+    orderBy: { updatedAt: "desc" },
   });
 
-  const isTokenExpired =
-    auth?.expiresAt && new Date(auth.expiresAt) < new Date();
+  if (existing) {
+    await prisma.whatsAppConnection.update({
+      where: { id: existing.id },
+      data: {
+        business_portfolio: payload.businessPortfolio,
+        business_name: payload.businessName,
+        display_phone_number: payload.phoneNumber,
+        status: ConnectionStatus.connected,
+      },
+    });
+  } else {
+    await prisma.whatsAppConnection.create({
+      data: {
+        workspaceId: user.workspaceId,
+        business_portfolio: payload.businessPortfolio,
+        business_name: payload.businessName,
+        display_phone_number: payload.phoneNumber,
+        status: ConnectionStatus.connected,
+      },
+    });
+  }
 
-  return {
-    status: connection.status,
-    phoneNumberId: connection.phone_number_id,
-    displayPhoneNumber: connection.display_phone_number,
-    businessName: connection.business_name,
-    tokenExpired: isTokenExpired,
-    tokenExpiresAt: auth?.expiresAt,
-    verificationStatus: connection.business_verification_status,
-    accountReviewStatus: connection.account_review_status,
-    obaStatus: connection.oba_status,
-  };
+  const freshUser = await prisma.user.findUniqueOrThrow({
+    where: { id: user.id },
+  });
+
+  const data = await buildAppState(prisma, freshUser);
+  return data;
 }
 
-export async function testSendMessage(
-  input: {
-    to: string;
-    messageType: "text" | "template";
-    body?: string;
-    templateName?: string;
-    language?: string;
-  },
-  workspaceContext: WorkspaceContext,
-  db: PrismaClient
-) {
-  // TODO: Implement in Stage 1
-  console.log("[WhatsApp Service] Test send not yet implemented", input);
-  
-  return {
-    status: "pending",
-    message: "Test send processor not yet implemented",
-    messageId: null,
-  };
+export async function disconnectWhatsApp() {
+  const user = await getCurrentUser(prisma);
+  if (!user) {
+    throw new Error("No active session. Sign in first.");
+  }
+
+  await prisma.whatsAppConnection.updateMany({
+    where: { workspaceId: user.workspaceId },
+    data: { status: ConnectionStatus.disconnected },
+  });
+
+  const freshUser = await prisma.user.findUniqueOrThrow({
+    where: { id: user.id },
+  });
+
+  const data = await buildAppState(prisma, freshUser);
+  return data;
 }

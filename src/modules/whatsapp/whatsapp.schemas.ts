@@ -10,4 +10,13 @@ export const testSendSchema = z.object({
   language: z.string().optional().default("en"),
 });
 
+export const connectWhatsAppSchema = z.object({
+  businessPortfolio: z.string().min(1),
+  wabaName: z.string().min(4),
+  phoneNumber: z.string().min(10).max(15),
+  businessName: z.string().min(1),
+});
+
+export type ConnectWhatsAppInput = z.infer<typeof connectWhatsAppSchema>;
+
 export type TestSendInput = z.infer<typeof testSendSchema>;

@@ -18,9 +18,13 @@ export async function createApp(): Promise<Express> {
   const authRoutes = (await import("./modules/auth/index.ts")).default;
   app.use("/auth", authRoutes);  // /auth/signup, /auth/signout
 
-  // Webhook routes (mostly public, but with signature verification)
+  // Meta routes (webhook is public, others check session in handlers)
   const metaRoutes = (await import("./modules/meta/index.ts")).default;
-  app.use("/webhook", metaRoutes);
+  app.use("/meta", metaRoutes);  // /meta/webhook, /meta/exchange-code, /meta/send-*, etc.
+
+  // Branding routes (public short links and partner branding)
+  const brandingRoutes = (await import("./modules/branding/index.ts")).default;
+  app.use("/", brandingRoutes);  // /t/:code (short links), /branding/:ref (public branding)
 
   // Root-level session routes (public, before requireSession)
   const { getAppState, signInUser, completeOnboarding } = (await import("./modules/auth/auth.service"));
@@ -70,6 +74,8 @@ export async function createApp(): Promise<Express> {
   ).default;
   const opsRoutes = (await import("./modules/ops/index.ts")).default;
   const adminRoutes = (await import("./modules/admin/index.ts")).default;
+  const walletRoutes = (await import("./modules/wallet/index.ts")).default;
+  const partnersRoutes = (await import("./modules/partners/index.ts")).default;
 
   app.use("/whatsapp", whatsappRoutes);
   app.use("/contacts", contactsRoutes);
@@ -80,6 +86,8 @@ export async function createApp(): Promise<Express> {
   app.use("/automation", automationRoutes);
   app.use("/ops", opsRoutes);
   app.use("/admin", adminRoutes);
+  app.use("/wallet", walletRoutes);
+  app.use("/partners", partnersRoutes);
 
   // Health check
   app.get("/health", (req, res) => {

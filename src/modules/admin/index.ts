@@ -1,7 +1,3 @@
-import { Router } from "express";
-
-const router = Router();
-
-// TODO: Implement admin routes
-
-export default router;
+export { default } from "./admin.routes";
+export * from "./admin.service";
+export * from "./admin.schemas";

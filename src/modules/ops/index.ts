@@ -1,7 +1,3 @@
-import { Router } from "express";
-
-const router = Router();
-
-// TODO: Implement ops routes
-
-export default router;
+export { default } from "./ops.routes";
+export * from "./ops.service";
+export * from "./ops.schemas";

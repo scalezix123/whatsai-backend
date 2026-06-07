@@ -1,7 +1,3 @@
-import { Router } from "express";
-
-const router = Router();
-
-// TODO: Implement meta routes
-
-export default router;
+export { default } from "./meta.routes";
+export * from "./meta.service";
+export * from "./meta.schemas";

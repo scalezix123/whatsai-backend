@@ -1,7 +1,3 @@
-import { Router } from "express";
-
-const router = Router();
-
-// TODO: Implement campaigns routes
-
-export default router;
+export { default } from "./campaigns.routes";
+export * from "./campaigns.service";
+export * from "./campaigns.schemas";

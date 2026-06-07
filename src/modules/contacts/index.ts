@@ -1,7 +1,3 @@
-import { Router } from "express";
-
-const router = Router();
-
-// TODO: Implement contacts routes
-
-export default router;
+export { default } from "./contacts.routes";
+export * from "./contacts.service";
+export * from "./contacts.schemas";

@@ -1,7 +1,3 @@
-import { Router } from "express";
-
-const router = Router();
-
-// TODO: Implement automation routes
-
-export default router;
+export { default } from "./automation.routes";
+export * from "./automation.service";
+export * from "./automation.schemas";

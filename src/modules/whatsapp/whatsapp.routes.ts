@@ -1,40 +1,22 @@
 import { Router } from "express";
-import { prisma } from "../../prisma";
-import { getConnectionHealthSchema, testSendSchema } from "./whatsapp.schemas";
-import {
-  getConnectionHealth,
-  testSendMessage,
-  type WorkspaceContext,
-} from "./whatsapp.service";
+import { connectWhatsAppSchema } from "./whatsapp.schemas";
+import { connectWhatsApp, disconnectWhatsApp } from "./whatsapp.service";
 
 const router = Router();
 
-router.get("/health", async (req, res, next) => {
+router.post("/connect", async (req, res, next) => {
   try {
-    const workspaceContext = req.workspaceContext as WorkspaceContext;
-    if (!workspaceContext?.workspaceId) {
-      throw new Error("Workspace context required");
-    }
-
-    const health = await getConnectionHealth(
-      workspaceContext.workspaceId,
-      prisma
-    );
-    res.json({ data: health });
+    const payload = connectWhatsAppSchema.parse(req.body);
+    const result = await connectWhatsApp(payload);
+    res.json({ data: result });
   } catch (error) {
     next(error);
   }
 });
 
-router.post("/test-send", async (req, res, next) => {
+router.post("/disconnect", async (req, res, next) => {
   try {
-    const workspaceContext = req.workspaceContext as WorkspaceContext;
-    if (!workspaceContext?.workspaceId) {
-      throw new Error("Workspace context required");
-    }
-
-    const payload = testSendSchema.parse(req.body);
-    const result = await testSendMessage(payload, workspaceContext, prisma);
+    const result = await disconnectWhatsApp();
     res.json({ data: result });
   } catch (error) {
     next(error);

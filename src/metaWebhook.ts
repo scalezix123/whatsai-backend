@@ -158,3 +158,25 @@ export function summarizeMetaWebhookPayload(payload: unknown): SummarizedMetaWeb
     }),
   );
 }
+
+// Stub implementations for webhook processing
+const processedWebhookIds = new Set<string>();
+
+export async function claimWebhookEvent(event: any): Promise<boolean> {
+  const eventId = `${event.object}-${event.entryId}-${Date.now()}`;
+  if (processedWebhookIds.has(eventId)) {
+    return false;
+  }
+  processedWebhookIds.add(eventId);
+  return true;
+}
+
+export async function persistWhatsAppWebhookEvent(event: any): Promise<void> {
+  console.log("Processing WhatsApp webhook event:", event.kind);
+  // Stub implementation - extend in Phase 1 webhook implementation
+}
+
+export async function persistLeadgenWebhookEvent(event: any): Promise<void> {
+  console.log("Processing leadgen webhook event:", event.kind);
+  // Stub implementation - extend in Phase 1 webhook implementation
+}
