@@ -1,7 +1,1 @@
-import { Router } from "express";
-
-const router = Router();
-
-// TODO: Implement conversations routes
-
-export default router;
+export { default } from "./conversations.routes";

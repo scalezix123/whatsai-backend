@@ -17,6 +17,7 @@ import {
   getLeadSourceMappings,
   createLeadSourceMapping,
   getWebhookVerifyToken,
+  verifyWebhookSignature,
   processWebhookPayload,
 } from "./meta.service";
 import { logFailedSend, getErrorMessage } from "../../utils";
@@ -40,6 +41,20 @@ router.get("/webhook", (req, res) => {
 
 // Webhook receiver (events)
 router.post("/webhook", (req, res) => {
+  // Verify webhook signature if app secret is configured
+  const appSecret = process.env.META_APP_SECRET;
+  const signature = req.headers["x-hub-signature-256"] as string;
+
+  if (appSecret && signature) {
+    const payload = JSON.stringify(req.body);
+    const isValid = verifyWebhookSignature(payload, signature, appSecret);
+
+    if (!isValid) {
+      console.warn("Invalid webhook signature");
+      return res.status(403).json({ error: "Invalid signature" });
+    }
+  }
+
   void (async () => {
     try {
       await processWebhookPayload(req.body);

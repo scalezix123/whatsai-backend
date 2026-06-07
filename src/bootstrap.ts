@@ -22,6 +22,11 @@ export async function createApp(): Promise<Express> {
   const metaRoutes = (await import("./modules/meta")).default;
   app.use("/meta", metaRoutes);  // /meta/webhook, /meta/exchange-code, /meta/send-*, etc.
 
+  // Health check (public, no session required)
+  app.get("/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // Branding routes (public short links and partner branding)
   const brandingRoutes = (await import("./modules/branding")).default;
   app.use("/", brandingRoutes);  // /t/:code (short links), /branding/:ref (public branding)
@@ -88,11 +93,6 @@ export async function createApp(): Promise<Express> {
   app.use("/admin", adminRoutes);
   app.use("/wallet", walletRoutes);
   app.use("/partners", partnersRoutes);
-
-  // Health check
-  app.get("/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
-  });
 
   // Error handler (must be last)
   app.use(errorNormalization);

@@ -1,5 +1,6 @@
 import { prisma } from "../../prisma";
 import { ConnectionStatus, AppConversationStatus, AppMessageDirection } from "@prisma/client";
+import crypto from "crypto";
 import {
   exchangeMetaCode,
   sendMetaTemplateMessage,
@@ -331,6 +332,18 @@ export async function createLeadSourceMapping(workspaceId: string, input: MetaLe
 }
 
 // Webhook verification
+export function verifyWebhookSignature(
+  payload: string,
+  signature: string,
+  appSecret: string
+): boolean {
+  const hash = crypto
+    .createHmac("sha256", appSecret)
+    .update(payload)
+    .digest("hex");
+  return signature === `sha256=${hash}`;
+}
+
 export function getWebhookVerifyToken(): string {
   return getMetaWebhookVerifyToken();
 }

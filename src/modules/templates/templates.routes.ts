@@ -1,0 +1,98 @@
+import { Router } from "express";
+import { prisma } from "../../prisma";
+import { requireSession } from "../../middleware";
+import {
+  createTemplateSchema,
+  updateTemplateSchema,
+  listTemplatesSchema,
+  syncTemplatesSchema,
+} from "./templates.schemas";
+import {
+  createTemplate,
+  listTemplates,
+  getTemplate,
+  updateTemplate,
+  deleteTemplate,
+  submitTemplateForApproval,
+  syncTemplatesWithMeta,
+} from "./templates.service";
+
+const router = Router();
+
+router.get("/", requireSession, async (req, res, next) => {
+  try {
+    const filters = listTemplatesSchema.parse(req.query);
+    const result = await listTemplates(req.workspaceContext.workspaceId, filters, prisma);
+    res.json({ data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:id", requireSession, async (req, res, next) => {
+  try {
+    const template = await getTemplate(req.params.id, req.workspaceContext.workspaceId, prisma);
+    res.json({ data: template });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/", requireSession, async (req, res, next) => {
+  try {
+    const payload = createTemplateSchema.parse(req.body);
+    const template = await createTemplate(req.workspaceContext.workspaceId, payload, prisma);
+    res.status(201).json({ data: template });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:id", requireSession, async (req, res, next) => {
+  try {
+    const payload = updateTemplateSchema.parse(req.body);
+    const template = await updateTemplate(
+      req.params.id,
+      req.workspaceContext.workspaceId,
+      payload,
+      prisma
+    );
+    res.json({ data: template });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/:id", requireSession, async (req, res, next) => {
+  try {
+    await deleteTemplate(req.params.id, req.workspaceContext.workspaceId, prisma);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:id/submit", requireSession, async (req, res, next) => {
+  try {
+    const template = await submitTemplateForApproval(
+      req.params.id,
+      req.workspaceContext.workspaceId,
+      prisma
+    );
+    res.json({ data: template });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/sync/meta", requireSession, async (req, res, next) => {
+  try {
+    const payload = syncTemplatesSchema.parse(req.body);
+    const result = await syncTemplatesWithMeta(req.workspaceContext.workspaceId, prisma);
+    res.json({ data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+export default router;
