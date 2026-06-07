@@ -139,6 +139,9 @@ model Workspace {
   whatsAppConnections WhatsAppConnection[]
   contacts            Contact[]
   contactTags         ContactTag[]
+  tagDefinitions      TagDefinition[]
+  attributeDefinitions AttributeDefinition[]
+  importBatches       ContactImportBatch[]
   templates           MessageTemplate[]
   campaigns           Campaign[]
   recipients          CampaignRecipient[]
@@ -208,15 +211,23 @@ model Contact {
   workspaceId String
   name       String
   phone      String
+  email      String?
+  optInStatus String    @default("unknown")
+  optedInAt  DateTime?
+  optedOutAt DateTime?
+  optOutSource String?
+  lastMessageAt DateTime?
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
   workspace  Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   tags       ContactTag[]
+  attributes ContactAttributeValue[]
   recipients CampaignRecipient[]
   leads      Lead[]
   conversations Conversation[]
 
   @@unique([workspaceId, phone])
+  @@index([workspaceId, optInStatus])
 }
 
 model ContactTag {
@@ -228,6 +239,74 @@ model ContactTag {
   contact    Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@unique([contactId, tag])
+}
+
+model TagDefinition {
+  id         String    @id @default(cuid())
+  workspaceId String
+  name       String
+  color      String?
+  createdAt  DateTime  @default(now())
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model AttributeDefinition {
+  id         String    @id @default(cuid())
+  workspaceId String
+  name       String
+  type       String    @default("string")
+  defaultValue String?
+  isRequired Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  values     ContactAttributeValue[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model ContactAttributeValue {
+  id         String    @id @default(cuid())
+  contactId  String
+  attributeId String
+  value      String
+  contact    Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  attribute  AttributeDefinition @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, attributeId])
+  @@index([contactId])
+}
+
+model ContactImportBatch {
+  id         String    @id @default(cuid())
+  workspaceId String
+  fileName   String
+  totalRows  Int
+  successCount Int @default(0)
+  errorCount Int @default(0)
+  status     String    @default("pending")
+  createdAt  DateTime  @default(now())
+  completedAt DateTime?
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  errors     ContactImportError[]
+
+  @@index([workspaceId, status])
+  @@index([createdAt])
+}
+
+model ContactImportError {
+  id        String    @id @default(cuid())
+  batchId   String
+  rowNumber Int
+  phone     String?
+  name      String?
+  reason    String
+  batch     ContactImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
 }
 
 model MessageTemplate {

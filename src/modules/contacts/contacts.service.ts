@@ -1,81 +1,563 @@
-import { prisma } from "../../prisma";
-import type { CreateContactInput } from "./contacts.schemas";
-import { buildAppState, getCurrentUser } from "../../state";
+import { PrismaClient } from "@prisma/client";
+import type {
+  CreateContactInput,
+  UpdateContactInput,
+  ListContactsInput,
+  CreateTagInput,
+  ListTagsInput,
+  CreateAttributeInput,
+  SetAttributeValueInput,
+  StartContactImportInput,
+  ListImportBatchesInput,
+  MarkContactOptInInput,
+  MarkContactOptOutInput,
+  BulkUpdateOptInInput,
+} from "./contacts.schemas";
 
-const SAMPLE_CONTACTS = [
-  {
-    name: "Kunal Mehta",
-    phone: "+91 99887 77665",
-    tags: ["CSV", "Shopify"],
-  },
-  { name: "Neha Kapoor", phone: "+91 90909 80808", tags: ["CSV", "VIP"] },
-  {
-    name: "Ritesh Jain",
-    phone: "+91 93456 78123",
-    tags: ["CSV", "Retail"],
-  },
-];
+// ============================================================================
+// CONTACT CRUD OPERATIONS
+// ============================================================================
 
-export async function createContact(input: CreateContactInput) {
-  const user = await getCurrentUser(prisma);
-  if (!user) {
-    throw new Error("No active session. Sign in first.");
+export async function createContact(
+  workspaceId: string,
+  input: CreateContactInput,
+  db: PrismaClient
+) {
+  // Check for duplicates
+  const existing = await db.contact.findFirst({
+    where: { workspaceId, phone: input.phone },
+  });
+
+  if (existing) {
+    throw new Error("Contact with this phone number already exists");
   }
 
-  await prisma.contact.create({
+  return await db.contact.create({
     data: {
-      workspaceId: user.workspaceId,
+      workspaceId,
       name: input.name,
       phone: input.phone,
-      tags: {
-        create: input.tags.map((tag) => ({
-          workspaceId: user.workspaceId,
-          tag,
-        })),
+      email: input.email,
+      optInStatus: input.optInStatus || "unknown",
+    },
+  });
+}
+
+export async function listContacts(
+  workspaceId: string,
+  filters: ListContactsInput,
+  db: PrismaClient
+) {
+  const where: any = { workspaceId };
+
+  // Search by name or phone
+  if (filters.search) {
+    where.OR = [
+      { name: { contains: filters.search, mode: "insensitive" } },
+      { phone: { contains: filters.search } },
+    ];
+  }
+
+  // Filter by tags
+  if (filters.tags?.length) {
+    where.tags = {
+      some: {
+        tag: { in: filters.tags },
+      },
+    };
+  }
+
+  // Filter by opt-in status
+  if (filters.optInStatus) {
+    where.optInStatus = filters.optInStatus;
+  }
+
+  const orderBy: any = {};
+  switch (filters.sortBy) {
+    case "name":
+      orderBy.name = "asc";
+      break;
+    case "lastMessage":
+      orderBy.lastMessageAt = "desc";
+      break;
+    case "createdAt":
+    default:
+      orderBy.createdAt = "desc";
+  }
+
+  const [total, contacts] = await Promise.all([
+    db.contact.count({ where }),
+    db.contact.findMany({
+      where,
+      include: { tags: true },
+      orderBy,
+      take: filters.limit,
+      skip: (filters.page - 1) * filters.limit,
+    }),
+  ]);
+
+  return {
+    total,
+    contacts,
+    page: filters.page,
+    limit: filters.limit,
+    pageCount: Math.ceil(total / filters.limit),
+  };
+}
+
+export async function getContact(id: string, workspaceId: string, db: PrismaClient) {
+  const contact = await db.contact.findUnique({
+    where: { id },
+    include: {
+      tags: true,
+      attributes: {
+        include: { attribute: true },
       },
     },
   });
 
-  const freshUser = await prisma.user.findUniqueOrThrow({
-    where: { id: user.id },
-  });
+  if (!contact || contact.workspaceId !== workspaceId) {
+    throw new Error("Contact not found");
+  }
 
-  const data = await buildAppState(prisma, freshUser);
-  return data;
+  return contact;
 }
 
-export async function uploadSampleContacts() {
-  const user = await getCurrentUser(prisma);
-  if (!user) {
-    throw new Error("No active session. Sign in first.");
-  }
-
-  for (const sample of SAMPLE_CONTACTS) {
-    const exists = await prisma.contact.findFirst({
-      where: { workspaceId: user.workspaceId, phone: sample.phone },
-    });
-    if (exists) {
-      continue;
-    }
-    await prisma.contact.create({
-      data: {
-        workspaceId: user.workspaceId,
-        name: sample.name,
-        phone: sample.phone,
-        tags: {
-          create: sample.tags.map((tag) => ({
-            workspaceId: user.workspaceId,
-            tag,
-          })),
-        },
-      },
-    });
-  }
-
-  const freshUser = await prisma.user.findUniqueOrThrow({
-    where: { id: user.id },
+export async function updateContact(
+  id: string,
+  workspaceId: string,
+  input: UpdateContactInput,
+  db: PrismaClient
+) {
+  const contact = await db.contact.findUnique({
+    where: { id },
   });
 
-  const data = await buildAppState(prisma, freshUser);
-  return data;
+  if (!contact || contact.workspaceId !== workspaceId) {
+    throw new Error("Contact not found");
+  }
+
+  // Check for duplicate phone if phone is being changed
+  if (input.phone && input.phone !== contact.phone) {
+    const duplicate = await db.contact.findFirst({
+      where: {
+        workspaceId,
+        phone: input.phone,
+        NOT: { id },
+      },
+    });
+
+    if (duplicate) {
+      throw new Error("Phone number already in use");
+    }
+  }
+
+  return await db.contact.update({
+    where: { id },
+    data: {
+      name: input.name,
+      phone: input.phone,
+      email: input.email,
+      optInStatus: input.optInStatus,
+    },
+    include: { tags: true },
+  });
+}
+
+export async function deleteContact(id: string, workspaceId: string, db: PrismaClient) {
+  const contact = await db.contact.findUnique({
+    where: { id },
+  });
+
+  if (!contact || contact.workspaceId !== workspaceId) {
+    throw new Error("Contact not found");
+  }
+
+  return await db.contact.delete({ where: { id } });
+}
+
+// ============================================================================
+// TAG MANAGEMENT
+// ============================================================================
+
+export async function createTag(
+  workspaceId: string,
+  input: CreateTagInput,
+  db: PrismaClient
+) {
+  try {
+    return await db.tagDefinition.create({
+      data: {
+        workspaceId,
+        name: input.name,
+        color: input.color,
+      },
+    });
+  } catch (error: any) {
+    if (error.code === "P2002") {
+      throw new Error("Tag already exists");
+    }
+    throw error;
+  }
+}
+
+export async function listTags(
+  workspaceId: string,
+  filters: ListTagsInput,
+  db: PrismaClient
+) {
+  const [total, tags] = await Promise.all([
+    db.tagDefinition.count({ where: { workspaceId } }),
+    db.tagDefinition.findMany({
+      where: { workspaceId },
+      orderBy: { name: "asc" },
+      take: filters.limit,
+      skip: (filters.page - 1) * filters.limit,
+    }),
+  ]);
+
+  return { total, tags, page: filters.page, limit: filters.limit };
+}
+
+export async function assignTagToContact(
+  contactId: string,
+  workspaceId: string,
+  tagName: string,
+  db: PrismaClient
+) {
+  const [contact, tagDef] = await Promise.all([
+    db.contact.findFirst({ where: { id: contactId, workspaceId } }),
+    db.tagDefinition.findFirst({ where: { workspaceId, name: tagName } }),
+  ]);
+
+  if (!contact) throw new Error("Contact not found");
+  if (!tagDef) throw new Error("Tag not found");
+
+  // Also create legacy ContactTag entry for backwards compatibility
+  return await db.contactTag.upsert({
+    where: { contactId_tag: { contactId, tag: tagName } },
+    create: { contactId, tag: tagName, workspaceId },
+    update: {},
+  });
+}
+
+export async function removeTagFromContact(
+  contactId: string,
+  workspaceId: string,
+  tagName: string,
+  db: PrismaClient
+) {
+  const contact = await db.contact.findFirst({
+    where: { id: contactId, workspaceId },
+  });
+
+  if (!contact) throw new Error("Contact not found");
+
+  return await db.contactTag.delete({
+    where: { contactId_tag: { contactId, tag: tagName } },
+  });
+}
+
+// ============================================================================
+// ATTRIBUTE MANAGEMENT
+// ============================================================================
+
+export async function createAttributeDefinition(
+  workspaceId: string,
+  input: CreateAttributeInput,
+  db: PrismaClient
+) {
+  try {
+    return await db.attributeDefinition.create({
+      data: {
+        workspaceId,
+        name: input.name,
+        type: input.type,
+        defaultValue: input.defaultValue,
+        isRequired: input.isRequired,
+      },
+    });
+  } catch (error: any) {
+    if (error.code === "P2002") {
+      throw new Error("Attribute already exists");
+    }
+    throw error;
+  }
+}
+
+export async function setContactAttribute(
+  contactId: string,
+  workspaceId: string,
+  attributeName: string,
+  value: string,
+  db: PrismaClient
+) {
+  const [contact, attrDef] = await Promise.all([
+    db.contact.findFirst({ where: { id: contactId, workspaceId } }),
+    db.attributeDefinition.findFirst({ where: { workspaceId, name: attributeName } }),
+  ]);
+
+  if (!contact) throw new Error("Contact not found");
+  if (!attrDef) throw new Error("Attribute not found");
+
+  return await db.contactAttributeValue.upsert({
+    where: { contactId_attributeId: { contactId, attributeId: attrDef.id } },
+    create: { contactId, attributeId: attrDef.id, value },
+    update: { value },
+  });
+}
+
+// ============================================================================
+// CONSENT MANAGEMENT
+// ============================================================================
+
+export async function markContactOptIn(
+  contactId: string,
+  workspaceId: string,
+  db: PrismaClient
+) {
+  const contact = await db.contact.findFirst({
+    where: { id: contactId, workspaceId },
+  });
+
+  if (!contact) throw new Error("Contact not found");
+
+  return await db.contact.update({
+    where: { id: contactId },
+    data: {
+      optInStatus: "opt_in",
+      optedInAt: new Date(),
+      optedOutAt: null,
+    },
+  });
+}
+
+export async function markContactOptOut(
+  contactId: string,
+  workspaceId: string,
+  reason: string | undefined,
+  db: PrismaClient
+) {
+  const contact = await db.contact.findFirst({
+    where: { id: contactId, workspaceId },
+  });
+
+  if (!contact) throw new Error("Contact not found");
+
+  return await db.contact.update({
+    where: { id: contactId },
+    data: {
+      optInStatus: "opt_out",
+      optedOutAt: new Date(),
+      optOutSource: reason,
+    },
+  });
+}
+
+export async function bulkUpdateOptInStatus(
+  workspaceId: string,
+  input: BulkUpdateOptInInput,
+  db: PrismaClient
+) {
+  const now = new Date();
+  const updateData = {
+    optInStatus: input.optInStatus,
+    ...(input.optInStatus === "opt_in" && { optedInAt: now, optedOutAt: null }),
+    ...(input.optInStatus === "opt_out" && { optedOutAt: now }),
+  };
+
+  const result = await db.contact.updateMany({
+    where: {
+      workspaceId,
+      id: { in: input.contactIds },
+    },
+    data: updateData,
+  });
+
+  return {
+    updated: result.count,
+    total: input.contactIds.length,
+  };
+}
+
+export async function canSendBroadcastToContact(
+  contactId: string,
+  db: PrismaClient
+): Promise<boolean> {
+  const contact = await db.contact.findUnique({
+    where: { id: contactId },
+    select: { optInStatus: true },
+  });
+
+  return contact?.optInStatus === "opt_in";
+}
+
+// ============================================================================
+// CSV IMPORT
+// ============================================================================
+
+export async function startContactImport(
+  workspaceId: string,
+  fileName: string,
+  rows: any[],
+  columnMapping: Record<string, string>,
+  skipDuplicates: boolean,
+  db: PrismaClient
+) {
+  // Create import batch
+  const batch = await db.contactImportBatch.create({
+    data: {
+      workspaceId,
+      fileName,
+      totalRows: rows.length,
+      status: "processing",
+    },
+  });
+
+  // Process rows asynchronously (non-blocking)
+  processImportRowsAsync(batch.id, rows, columnMapping, skipDuplicates, workspaceId, db);
+
+  return batch;
+}
+
+async function processImportRowsAsync(
+  batchId: string,
+  rows: any[],
+  columnMapping: Record<string, string>,
+  skipDuplicates: boolean,
+  workspaceId: string,
+  db: PrismaClient
+) {
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    try {
+      const row = rows[i];
+      const name = row[columnMapping["name"]]?.toString()?.trim();
+      const phone = row[columnMapping["phone"]]?.toString()?.trim();
+      const email = row[columnMapping["email"]]?.toString()?.trim();
+
+      // Validate required fields
+      if (!name) throw new Error("Name is required");
+      if (!phone) throw new Error("Phone is required");
+
+      // Normalize phone (remove spaces, dashes, etc.)
+      const normalizedPhone = phone.replace(/[\s\-()]/g, "");
+
+      // Check for duplicates
+      const existing = await db.contact.findFirst({
+        where: { workspaceId, phone: normalizedPhone },
+      });
+
+      if (existing) {
+        if (skipDuplicates) {
+          continue;
+        } else {
+          throw new Error("Duplicate phone number");
+        }
+      }
+
+      // Create contact
+      await db.contact.create({
+        data: {
+          workspaceId,
+          name,
+          phone: normalizedPhone,
+          email: email || undefined,
+        },
+      });
+
+      successCount++;
+    } catch (error) {
+      errorCount++;
+      const row = rows[i];
+      await db.contactImportError.create({
+        data: {
+          batchId,
+          rowNumber: i + 2,
+          phone: row[columnMapping["phone"]]?.toString(),
+          name: row[columnMapping["name"]]?.toString(),
+          reason: (error as Error).message,
+        },
+      });
+    }
+  }
+
+  // Update batch status
+  await db.contactImportBatch.update({
+    where: { id: batchId },
+    data: {
+      successCount,
+      errorCount,
+      status: "completed",
+      completedAt: new Date(),
+    },
+  });
+}
+
+export async function listImportBatches(
+  workspaceId: string,
+  filters: ListImportBatchesInput,
+  db: PrismaClient
+) {
+  const where: any = { workspaceId };
+
+  if (filters.status) {
+    where.status = filters.status;
+  }
+
+  const [total, batches] = await Promise.all([
+    db.contactImportBatch.count({ where }),
+    db.contactImportBatch.findMany({
+      where,
+      include: { errors: true },
+      orderBy: { createdAt: "desc" },
+      take: filters.limit,
+      skip: (filters.page - 1) * filters.limit,
+    }),
+  ]);
+
+  return { total, batches, page: filters.page, limit: filters.limit };
+}
+
+export async function getImportBatch(batchId: string, workspaceId: string, db: PrismaClient) {
+  const batch = await db.contactImportBatch.findUnique({
+    where: { id: batchId },
+    include: { errors: true },
+  });
+
+  if (!batch || batch.workspaceId !== workspaceId) {
+    throw new Error("Import batch not found");
+  }
+
+  return batch;
+}
+
+export async function downloadImportErrors(
+  batchId: string,
+  workspaceId: string,
+  db: PrismaClient
+) {
+  const batch = await db.contactImportBatch.findUnique({
+    where: { id: batchId },
+    include: { errors: true },
+  });
+
+  if (!batch || batch.workspaceId !== workspaceId) {
+    throw new Error("Import batch not found");
+  }
+
+  // Format as CSV
+  let csv = "Row Number,Phone,Name,Reason\n";
+  for (const error of batch.errors) {
+    csv += `${error.rowNumber},"${error.phone || ""}","${error.name || ""}","${error.reason}"\n`;
+  }
+
+  return csv;
+}
+
+// Backward compatibility stubs
+export async function uploadSampleContacts() {
+  throw new Error("uploadSampleContacts is deprecated. Use createContact instead.");
 }

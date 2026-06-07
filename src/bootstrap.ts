@@ -1,10 +1,12 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import swaggerUi from "swagger-ui-express";
 import {
   requestId,
   requireSession,
   errorNormalization,
 } from "./middleware/index";
+import { generateOpenAPISpec } from "./openapi";
 
 export async function createApp(): Promise<Express> {
   const app = express();
@@ -25,6 +27,13 @@ export async function createApp(): Promise<Express> {
   // Health check (public, no session required)
   app.get("/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // API Documentation (public)
+  const openAPISpec = generateOpenAPISpec();
+  app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(openAPISpec));
+  app.get("/api-spec.json", (req, res) => {
+    res.json(openAPISpec);
   });
 
   // Branding routes (public short links and partner branding)
