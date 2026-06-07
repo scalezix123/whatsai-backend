@@ -3,6 +3,8 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { defineConfig, env } from "@prisma/config";
 
+config();
+
 // Get file-relative directory path
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
