@@ -15,15 +15,15 @@ export async function createApp(): Promise<Express> {
   app.use(requestId());
 
   // Public routes (no session required)
-  const authRoutes = (await import("./modules/auth/index.ts")).default;
+  const authRoutes = (await import("./modules/auth")).default;
   app.use("/auth", authRoutes);  // /auth/signup, /auth/signout
 
   // Meta routes (webhook is public, others check session in handlers)
-  const metaRoutes = (await import("./modules/meta/index.ts")).default;
+  const metaRoutes = (await import("./modules/meta")).default;
   app.use("/meta", metaRoutes);  // /meta/webhook, /meta/exchange-code, /meta/send-*, etc.
 
   // Branding routes (public short links and partner branding)
-  const brandingRoutes = (await import("./modules/branding/index.ts")).default;
+  const brandingRoutes = (await import("./modules/branding")).default;
   app.use("/", brandingRoutes);  // /t/:code (short links), /branding/:ref (public branding)
 
   // Root-level session routes (public, before requireSession)
@@ -61,21 +61,21 @@ export async function createApp(): Promise<Express> {
   // Protected routes (session required)
   app.use(requireSession);
 
-  const whatsappRoutes = (await import("./modules/whatsapp/index.ts")).default;
-  const contactsRoutes = (await import("./modules/contacts/index.ts")).default;
-  const templatesRoutes = (await import("./modules/templates/index.ts")).default;
-  const campaignsRoutes = (await import("./modules/campaigns/index.ts")).default;
+  const whatsappRoutes = (await import("./modules/whatsapp")).default;
+  const contactsRoutes = (await import("./modules/contacts")).default;
+  const templatesRoutes = (await import("./modules/templates")).default;
+  const campaignsRoutes = (await import("./modules/campaigns")).default;
   const conversationsRoutes = (
-    await import("./modules/conversations/index.ts")
+    await import("./modules/conversations")
   ).default;
-  const leadsRoutes = (await import("./modules/leads/index.ts")).default;
+  const leadsRoutes = (await import("./modules/leads")).default;
   const automationRoutes = (
-    await import("./modules/automation/index.ts")
+    await import("./modules/automation")
   ).default;
-  const opsRoutes = (await import("./modules/ops/index.ts")).default;
-  const adminRoutes = (await import("./modules/admin/index.ts")).default;
-  const walletRoutes = (await import("./modules/wallet/index.ts")).default;
-  const partnersRoutes = (await import("./modules/partners/index.ts")).default;
+  const opsRoutes = (await import("./modules/ops")).default;
+  const adminRoutes = (await import("./modules/admin")).default;
+  const walletRoutes = (await import("./modules/wallet")).default;
+  const partnersRoutes = (await import("./modules/partners")).default;
 
   app.use("/whatsapp", whatsappRoutes);
   app.use("/contacts", contactsRoutes);

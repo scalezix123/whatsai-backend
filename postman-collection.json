@@ -1,0 +1,261 @@
+{
+  "info": {
+    "name": "WhatsApp SaaS API Tests",
+    "description": "Testing refactored modular API endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth Module",
+      "item": [
+        {
+          "name": "Signup - Valid Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"securepassword123\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/auth/signup",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["auth", "signup"]
+            }
+          }
+        },
+        {
+          "name": "Signup - Invalid Password (Too Short)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John\",\n  \"email\": \"john@test.com\",\n  \"password\": \"short\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/auth/signup",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["auth", "signup"]
+            }
+          }
+        },
+        {
+          "name": "Signout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/auth/signout",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["auth", "signout"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wallet Module",
+      "item": [
+        {
+          "name": "Top-up Wallet (Protected)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100,\n  \"source\": \"Credit Card\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/wallet/top-up",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["wallet", "top-up"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Contacts Module",
+      "item": [
+        {
+          "name": "Create Contact (Protected)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Doe\",\n  \"phone\": \"+1234567890\",\n  \"tags\": [\"VIP\", \"Sales\"]\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/contacts",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["contacts"]
+            }
+          }
+        },
+        {
+          "name": "Upload Sample Contacts (Protected)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/contacts/upload-sample",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["contacts", "upload-sample"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Campaigns Module",
+      "item": [
+        {
+          "name": "Create Campaign (Protected)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Q1 Campaign\",\n  \"templateId\": \"template-123\",\n  \"contactIds\": [\"contact-1\", \"contact-2\"],\n  \"sendNow\": false\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/campaigns",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["campaigns"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Automation Module",
+      "item": [
+        {
+          "name": "Get Definitions (Protected)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/automation/definitions",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["automation", "definitions"]
+            }
+          }
+        },
+        {
+          "name": "Create Flow Definition (Protected)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Welcome Flow\",\n  \"description\": \"Welcome new subscribers\",\n  \"nodes\": [],\n  \"edges\": [],\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/automation/definitions",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["automation", "definitions"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Module",
+      "item": [
+        {
+          "name": "List All Users (Admin Only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/admin/users",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["admin", "users"]
+            }
+          }
+        },
+        {
+          "name": "List All Partners (Admin Only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:3001/admin/partners",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "3001",
+              "path": ["admin", "partners"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3001/health",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "3001",
+          "path": ["health"]
+        }
+      }
+    }
+  ]
+}
