@@ -38,9 +38,11 @@ enum WalletReferenceType {
 enum MessageTemplateCategory {
   marketing
   utility
+  authentication
 }
 
 enum TemplateStatus {
+  draft
   approved
   pending
   rejected
@@ -310,17 +312,30 @@ model ContactImportError {
 }
 
 model MessageTemplate {
-  id         String                  @id @default(cuid())
-  workspaceId String
-  name       String
-  category   MessageTemplateCategory
-  status     TemplateStatus
-  language   String
-  body       String
-  createdAt  DateTime                @default(now())
-  updatedAt  DateTime                @updatedAt
-  workspace  Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  campaigns  Campaign[]
+  id              String                  @id @default(cuid())
+  workspaceId     String
+  name            String
+  category        MessageTemplateCategory
+  status          TemplateStatus          @default(draft)
+  language        String
+  body            String
+  headerType      String                  @default("none") // none, text, image, video, document
+  headerText      String?
+  footerText      String?
+  buttons         Json? // array of { type, text, url?, phoneNumber? }
+  variables       Json? // array of placeholder tokens detected, e.g. ["{{1}}", "{{2}}"]
+  variableCount   Int                     @default(0)
+  exampleValues   Json? // sample values keyed by placeholder for previews
+  metaTemplateId  String? // id returned by Meta after submission
+  rejectionReason String?
+  syncedAt        DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  workspace       Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaigns       Campaign[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, category])
 }
 
 model Campaign {
@@ -331,6 +346,7 @@ model Campaign {
   status        CampaignStatus
   estimatedCost Float
   spent         Float            @default(0)
+  parameters    Json? // shared template parameter values, keyed by placeholder
   scheduledFor  DateTime?
   launchedAt    DateTime?
   createdAt     DateTime         @default(now())
@@ -338,19 +354,28 @@ model Campaign {
   workspace     Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   template      MessageTemplate  @relation(fields: [templateId], references: [id], onDelete: Restrict)
   recipients    CampaignRecipient[]
+
+  @@index([workspaceId, status])
 }
 
 model CampaignRecipient {
-  id          String          @id @default(cuid())
+  id           String          @id @default(cuid())
   workspaceId  String
   campaignId   String
   contactId    String
-  status      RecipientStatus @default(queued)
-  cost        Float
-  createdAt   DateTime        @default(now())
-  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  campaign    Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contact     Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  status       RecipientStatus @default(queued)
+  cost         Float
+  parameters   Json? // resolved per-recipient template parameter values
+  attempts     Int             @default(0)
+  metaMessageId String?
+  error        String?
+  sentAt       DateTime?
+  createdAt    DateTime        @default(now())
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign     Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact      Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status])
 }
 
 model WalletTransaction {

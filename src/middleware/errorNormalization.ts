@@ -22,6 +22,7 @@ export const errorNormalization = (
     error: {
       message,
       requestId,
+      ...(err.details !== undefined && { details: err.details }),
       ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
     },
   });

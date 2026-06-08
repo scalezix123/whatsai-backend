@@ -18,14 +18,25 @@ import type {
 // CONTACT CRUD OPERATIONS
 // ============================================================================
 
+/**
+ * Strip formatting (spaces, dashes, parentheses) so that "+1 (555) 123-4567"
+ * and "+15551234567" are treated as the same number for storage and dedup.
+ * Used by create, update and CSV import so all paths agree.
+ */
+export function normalizePhone(phone: string): string {
+  return phone.replace(/[\s\-()]/g, "");
+}
+
 export async function createContact(
   workspaceId: string,
   input: CreateContactInput,
   db: PrismaClient
 ) {
+  const phone = normalizePhone(input.phone);
+
   // Check for duplicates
   const existing = await db.contact.findFirst({
-    where: { workspaceId, phone: input.phone },
+    where: { workspaceId, phone },
   });
 
   if (existing) {
@@ -36,7 +47,7 @@ export async function createContact(
     data: {
       workspaceId,
       name: input.name,
-      phone: input.phone,
+      phone,
       email: input.email,
       optInStatus: input.optInStatus || "unknown",
     },
@@ -50,11 +61,12 @@ export async function listContacts(
 ) {
   const where: any = { workspaceId };
 
-  // Search by name or phone
+  // Search by name, phone or email
   if (filters.search) {
     where.OR = [
       { name: { contains: filters.search, mode: "insensitive" } },
       { phone: { contains: filters.search } },
+      { email: { contains: filters.search, mode: "insensitive" } },
     ];
   }
 
@@ -137,12 +149,14 @@ export async function updateContact(
     throw new Error("Contact not found");
   }
 
+  const normalizedPhone = input.phone ? normalizePhone(input.phone) : undefined;
+
   // Check for duplicate phone if phone is being changed
-  if (input.phone && input.phone !== contact.phone) {
+  if (normalizedPhone && normalizedPhone !== contact.phone) {
     const duplicate = await db.contact.findFirst({
       where: {
         workspaceId,
-        phone: input.phone,
+        phone: normalizedPhone,
         NOT: { id },
       },
     });
@@ -156,7 +170,7 @@ export async function updateContact(
     where: { id },
     data: {
       name: input.name,
-      phone: input.phone,
+      phone: normalizedPhone,
       email: input.email,
       optInStatus: input.optInStatus,
     },
@@ -431,19 +445,26 @@ async function processImportRowsAsync(
   let successCount = 0;
   let errorCount = 0;
 
+  // columnMapping is { csvColumn: field } (e.g. { "Full Name": "name" }).
+  // Invert it to { field: csvColumn } so we can read row[csvColumn] per field.
+  const fieldToColumn: Record<string, string> = {};
+  for (const [csvColumn, field] of Object.entries(columnMapping)) {
+    fieldToColumn[field] = csvColumn;
+  }
+
   for (let i = 0; i < rows.length; i++) {
     try {
       const row = rows[i];
-      const name = row[columnMapping["name"]]?.toString()?.trim();
-      const phone = row[columnMapping["phone"]]?.toString()?.trim();
-      const email = row[columnMapping["email"]]?.toString()?.trim();
+      const name = row[fieldToColumn["name"]]?.toString()?.trim();
+      const phone = row[fieldToColumn["phone"]]?.toString()?.trim();
+      const email = row[fieldToColumn["email"]]?.toString()?.trim();
 
       // Validate required fields
       if (!name) throw new Error("Name is required");
       if (!phone) throw new Error("Phone is required");
 
-      // Normalize phone (remove spaces, dashes, etc.)
-      const normalizedPhone = phone.replace(/[\s\-()]/g, "");
+      // Normalize phone (remove spaces, dashes, etc.) — same rule as create/update
+      const normalizedPhone = normalizePhone(phone);
 
       // Check for duplicates
       const existing = await db.contact.findFirst({
@@ -476,8 +497,8 @@ async function processImportRowsAsync(
         data: {
           batchId,
           rowNumber: i + 2,
-          phone: row[columnMapping["phone"]]?.toString(),
-          name: row[columnMapping["name"]]?.toString(),
+          phone: row[fieldToColumn["phone"]]?.toString(),
+          name: row[fieldToColumn["name"]]?.toString(),
           reason: (error as Error).message,
         },
       });

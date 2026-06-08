@@ -11,11 +11,18 @@ export const createContactSchema = z.object({
 
 export const updateContactSchema = createContactSchema.partial();
 
+// Query params arrive as strings; coerce numbers and accept tags as a single
+// value or repeated key (?tags=a&tags=b).
+const queryStringArray = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .transform((v) => (v === undefined ? undefined : Array.isArray(v) ? v : [v]));
+
 export const listContactsSchema = z.object({
-  page: z.number().int().min(1).default(1),
-  limit: z.number().int().min(1).max(100).default(20),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().optional(),
-  tags: z.array(z.string()).optional(),
+  tags: queryStringArray,
   optInStatus: z.enum(["opt_in", "opt_out", "unknown"]).optional(),
   sortBy: z.enum(["createdAt", "name", "lastMessage"]).default("createdAt"),
 });
@@ -27,8 +34,8 @@ export const createTagSchema = z.object({
 });
 
 export const listTagsSchema = z.object({
-  page: z.number().int().min(1).default(1),
-  limit: z.number().int().min(1).max(100).default(100),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(100),
 });
 
 // Attribute management schemas
@@ -53,8 +60,8 @@ export const startContactImportSchema = z.object({
 });
 
 export const listImportBatchesSchema = z.object({
-  page: z.number().int().min(1).default(1),
-  limit: z.number().int().min(1).max(100).default(20),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(["pending", "processing", "completed", "failed"]).optional(),
 });
 
