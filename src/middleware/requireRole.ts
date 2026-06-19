@@ -5,13 +5,17 @@ export const requireRole = (allowedRoles: UserRole[]) => {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
       if (!req.workspaceContext) {
-        throw new Error("Session required");
+        const err: any = new Error("Session required");
+        err.statusCode = 401;
+        throw err;
       }
 
       const userRole: UserRole = req.workspaceContext.role;
-      
+
       if (!allowedRoles.includes(userRole)) {
-        throw new Error("Insufficient permissions");
+        const err: any = new Error("Insufficient permissions");
+        err.statusCode = 403;
+        throw err;
       }
 
       next();

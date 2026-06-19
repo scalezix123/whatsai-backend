@@ -16,11 +16,18 @@ export const automationTriggerQueue = new Bull('automation-trigger', redisConfig
 
 // Initialize queue event handlers
 export async function initializeQueues() {
-  // Campaign dispatch processor
+  // Campaign dispatch processor. Dynamic imports keep queue.ts and the campaigns
+  // service free of a top-level circular dependency (the service enqueues here).
   campaignDispatchQueue.process(async (job) => {
-    // Will implement in Stage 4
-    console.log('[Queue] Campaign dispatch job received:', job.id);
-    return { status: 'pending', message: 'Processor not yet implemented' };
+    const { workspaceId, campaignId } = job.data as {
+      workspaceId: string;
+      campaignId: string;
+    };
+    console.log(`[Queue] Dispatching campaign ${campaignId} (job ${job.id})`);
+    const { dispatchCampaign } = await import('./modules/campaigns/campaigns.service');
+    const { prisma } = await import('./prisma');
+    await dispatchCampaign(workspaceId, campaignId, prisma);
+    return { status: 'done', campaignId };
   });
 
   // Webhook processor
@@ -66,6 +73,23 @@ export async function initializeQueues() {
   );
 
   console.log('[Queue] All queues initialized');
+}
+
+/**
+ * Enqueue a campaign for asynchronous dispatch on the Bull worker. Retries with
+ * exponential backoff. Callers should treat a thrown error (e.g. Redis down) as a
+ * signal to fall back to inline dispatch.
+ */
+export async function enqueueCampaignDispatch(data: {
+  workspaceId: string;
+  campaignId: string;
+}) {
+  return campaignDispatchQueue.add(data, {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 5000 },
+    removeOnComplete: true,
+    removeOnFail: false,
+  });
 }
 
 // Graceful shutdown

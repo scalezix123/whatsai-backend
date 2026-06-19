@@ -164,6 +164,8 @@ model Workspace {
   flowDefinitions     AutomationFlowDefinition[]
   flowRuns            AutomationFlowRun[]
   linkClicks          LinkClick[]
+  segments            Segment[]
+  trackedLinks        TrackedLink[]
 }
 
 model User {
@@ -349,6 +351,10 @@ model Campaign {
   parameters    Json? // shared template parameter values, keyed by placeholder
   scheduledFor  DateTime?
   launchedAt    DateTime?
+  // Phase 2: recipient source + automation lineage
+  segmentId        String?    // audience source if built from a saved segment
+  sourceCampaignId String?    // retargeting: the campaign this audience was derived from
+  recurrence       Json?      // { freq: 'daily'|'weekly'|'monthly', interval, until? } -> clones next run
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   workspace     Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -616,6 +622,44 @@ model LinkClick {
   userAgent         String?
   clickedAt         DateTime  @default(now())
   workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, linkCode])
+}
+
+// Phase 2: saved audience segment. `filters` holds a SegmentFilter rule object
+// that the filter engine compiles to a Prisma Contact where-clause at query time,
+// so a segment always reflects current contact data (no stale membership list).
+model Segment {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  filters     Json      // SegmentFilter rule object
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+// Phase 2: trackable short link. The public /t/:code redirect logs a LinkClick
+// (joined by linkCode) and increments clickCount. `campaignId` attributes clicks
+// to a campaign for retargeting + analytics.
+model TrackedLink {
+  id          String    @id @default(cuid())
+  workspaceId String
+  code        String
+  originalUrl String
+  title       String?
+  campaignId  String?
+  clickCount  Int       @default(0)
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId])
+  @@index([campaignId])
 }
 
 model Partner {

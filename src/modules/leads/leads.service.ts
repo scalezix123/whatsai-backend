@@ -1,9 +1,9 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import type {
   ListLeadsInput,
+  CreateLeadInput,
   UpdateLeadStatusInput,
   AddLeadNoteInput,
-  CreateLeadInput,
 } from "./leads.schemas";
 
 export async function listLeads(
@@ -11,46 +11,28 @@ export async function listLeads(
   filters: ListLeadsInput,
   db: PrismaClient
 ) {
-  const where: any = { workspaceId };
+  const where: Prisma.LeadWhereInput = { workspaceId };
 
   if (filters.search) {
     where.OR = [
+      { fullName: { contains: filters.search, mode: "insensitive" } },
+      { phone: { contains: filters.search } },
+      { email: { contains: filters.search, mode: "insensitive" } },
       { contact: { name: { contains: filters.search, mode: "insensitive" } } },
-      { contact: { phone: { contains: filters.search } } },
-      { description: { contains: filters.search, mode: "insensitive" } },
     ];
   }
+  if (filters.status) where.status = filters.status;
+  if (filters.source) where.source = filters.source;
+  if (filters.assignedTo) where.assignedTo = filters.assignedTo;
 
-  if (filters.status) {
-    where.status = filters.status;
-  }
-
-  if (filters.source) {
-    where.source = filters.source;
-  }
-
-  if (filters.assignedTo) {
-    where.assignedTo = filters.assignedTo;
-  }
-
-  const orderBy: any = {};
-  switch (filters.sortBy) {
-    case "createdAt":
-      orderBy.createdAt = "desc";
-      break;
-    case "value":
-      orderBy.value = "desc";
-      break;
-    case "updatedAt":
-    default:
-      orderBy.updatedAt = "desc";
-  }
+  const orderBy: Prisma.LeadOrderByWithRelationInput =
+    filters.sortBy === "createdAt" ? { createdAt: "desc" } : { updatedAt: "desc" };
 
   const [total, leads] = await Promise.all([
     db.lead.count({ where }),
     db.lead.findMany({
       where,
-      include: { contact: true, assignedUser: true },
+      include: { contact: true },
       orderBy,
       take: filters.limit,
       skip: (filters.page - 1) * filters.limit,
@@ -61,19 +43,11 @@ export async function listLeads(
 }
 
 export async function getLead(id: string, workspaceId: string, db: PrismaClient) {
-  const lead = await db.lead.findUnique({
-    where: { id },
-    include: {
-      contact: true,
-      assignedUser: true,
-      notes: { orderBy: { createdAt: "desc" } },
-    },
+  const lead = await db.lead.findFirst({
+    where: { id, workspaceId },
+    include: { contact: true, conversation: true },
   });
-
-  if (!lead || lead.workspaceId !== workspaceId) {
-    throw new Error("Lead not found");
-  }
-
+  if (!lead) throw new Error("Lead not found");
   return lead;
 }
 
@@ -82,23 +56,35 @@ export async function createLead(
   input: CreateLeadInput,
   db: PrismaClient
 ) {
-  const contact = await db.contact.findFirst({
-    where: { id: input.contactId, workspaceId },
-  });
+  let fullName = input.fullName;
+  let phone = input.phone;
+  let email = input.email;
+  let contactId = input.contactId;
 
-  if (!contact) {
-    throw new Error("Contact not found");
+  if (contactId) {
+    const contact = await db.contact.findFirst({ where: { id: contactId, workspaceId } });
+    if (!contact) throw new Error("Contact not found");
+    fullName = fullName ?? contact.name;
+    phone = phone ?? contact.phone;
+    email = email ?? contact.email ?? undefined;
   }
 
-  return await db.lead.create({
+  if (!fullName || !phone) {
+    throw new Error("Provide a contactId, or both fullName and phone");
+  }
+
+  return db.lead.create({
     data: {
       workspaceId,
-      contactId: input.contactId,
-      source: input.source,
+      contactId: contactId ?? null,
+      conversationId: input.conversationId ?? null,
+      fullName,
+      phone,
+      email: email ?? "",
       status: "new",
-      value: input.value,
-      description: input.description,
-      metadata: input.metadata,
+      source: input.source,
+      sourceLabel: input.sourceLabel ?? "",
+      notes: input.notes ?? "",
     },
     include: { contact: true },
   });
@@ -110,22 +96,30 @@ export async function updateLeadStatus(
   input: UpdateLeadStatusInput,
   db: PrismaClient
 ) {
-  const lead = await db.lead.findUnique({
-    where: { id },
-  });
+  const lead = await db.lead.findFirst({ where: { id, workspaceId } });
+  if (!lead) throw new Error("Lead not found");
 
-  if (!lead || lead.workspaceId !== workspaceId) {
-    throw new Error("Lead not found");
-  }
+  // Optional note is appended to the running notes log with a status marker.
+  const notes = input.note
+    ? appendNote(lead.notes, `[status → ${input.status}] ${input.note}`)
+    : lead.notes;
 
-  return await db.lead.update({
+  return db.lead.update({
     where: { id },
-    data: {
-      status: input.status,
-      reason: input.reason,
-    },
-    include: { contact: true, assignedUser: true },
+    data: { status: input.status, notes },
+    include: { contact: true },
   });
+}
+
+/**
+ * Lead has a single `notes` text field (no separate note model), so notes are
+ * kept as a timestamped, newline-separated log.
+ */
+function appendNote(existing: string, entry: string, authorName?: string): string {
+  const stamp = new Date().toISOString();
+  const author = authorName ? ` ${authorName}` : "";
+  const line = `[${stamp}${author}] ${entry}`;
+  return existing ? `${existing}\n${line}` : line;
 }
 
 export async function addLeadNote(
@@ -134,49 +128,34 @@ export async function addLeadNote(
   input: AddLeadNoteInput,
   db: PrismaClient
 ) {
-  const lead = await db.lead.findUnique({
+  const lead = await db.lead.findFirst({ where: { id: leadId, workspaceId } });
+  if (!lead) throw new Error("Lead not found");
+
+  return db.lead.update({
     where: { id: leadId },
-  });
-
-  if (!lead || lead.workspaceId !== workspaceId) {
-    throw new Error("Lead not found");
-  }
-
-  return await db.leadNote.create({
-    data: {
-      leadId,
-      content: input.content,
-      type: input.type,
-    },
+    data: { notes: appendNote(lead.notes, input.content, input.authorName) },
+    include: { contact: true },
   });
 }
 
 export async function assignLead(
   id: string,
   workspaceId: string,
-  userId: string,
+  userId: string | null,
   db: PrismaClient
 ) {
-  const lead = await db.lead.findUnique({
-    where: { id },
-  });
+  const lead = await db.lead.findFirst({ where: { id, workspaceId } });
+  if (!lead) throw new Error("Lead not found");
 
-  if (!lead || lead.workspaceId !== workspaceId) {
-    throw new Error("Lead not found");
+  if (userId) {
+    const user = await db.user.findFirst({ where: { id: userId, workspaceId } });
+    if (!user) throw new Error("User not found");
   }
 
-  const user = await db.user.findUnique({
-    where: { id: userId },
-  });
-
-  if (!user || user.workspaceId !== workspaceId) {
-    throw new Error("User not found");
-  }
-
-  return await db.lead.update({
+  return db.lead.update({
     where: { id },
     data: { assignedTo: userId },
-    include: { contact: true, assignedUser: true },
+    include: { contact: true },
   });
 }
 
@@ -185,9 +164,8 @@ export async function getLeadsByContact(
   workspaceId: string,
   db: PrismaClient
 ) {
-  return await db.lead.findMany({
+  return db.lead.findMany({
     where: { contactId, workspaceId },
-    include: { assignedUser: true },
     orderBy: { createdAt: "desc" },
   });
 }

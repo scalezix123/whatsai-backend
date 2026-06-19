@@ -388,3 +388,87 @@ export async function sendMetaInteractiveMessage(input: MetaInteractiveSendInput
     }),
   });
 }
+
+// ============================================================================
+// Message-template management (WhatsApp Business Account / Graph API)
+// ============================================================================
+
+export interface MetaTemplateComponent {
+  type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS";
+  [key: string]: unknown;
+}
+
+export interface CreateMetaTemplateInput {
+  accessToken: string;
+  wabaId: string;
+  name: string;
+  /** Meta language code, e.g. "en_US". */
+  language: string;
+  /** Uppercase Meta category: MARKETING | UTILITY | AUTHENTICATION. */
+  category: string;
+  components: MetaTemplateComponent[];
+}
+
+export interface MetaTemplateCreateResponse {
+  id: string;
+  status?: string;
+  category?: string;
+}
+
+/** Submit a template to Meta for review. Returns the created template id + status. */
+export async function createMetaMessageTemplate(
+  input: CreateMetaTemplateInput
+): Promise<MetaTemplateCreateResponse> {
+  const url = `https://graph.facebook.com/${metaApiVersion}/${input.wabaId}/message_templates`;
+
+  return fetchJson<MetaTemplateCreateResponse>(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: input.name,
+      language: input.language,
+      category: input.category,
+      components: input.components,
+    }),
+  });
+}
+
+export interface MetaTemplateSummary {
+  id: string;
+  name: string;
+  status: string;
+  category?: string;
+  language?: string;
+  rejected_reason?: string;
+}
+
+/** List templates on a WABA, paging through all results, for status reconciliation. */
+export async function listMetaMessageTemplates(input: {
+  accessToken: string;
+  wabaId: string;
+}): Promise<MetaTemplateSummary[]> {
+  const fields = "id,name,status,category,language,rejected_reason";
+  let url:
+    | string
+    | undefined = `https://graph.facebook.com/${metaApiVersion}/${input.wabaId}/message_templates?fields=${fields}&limit=200`;
+
+  const all: MetaTemplateSummary[] = [];
+  // Follow paging cursors but cap iterations to avoid an unbounded loop.
+  for (let page = 0; page < 25 && url; page += 1) {
+    const res: MetaTemplateListResponse = await fetchJson<MetaTemplateListResponse>(url, {
+      headers: { Authorization: `Bearer ${input.accessToken}` },
+    });
+    if (res.data) all.push(...res.data);
+    url = res.paging?.next;
+  }
+
+  return all;
+}
+
+interface MetaTemplateListResponse {
+  data?: MetaTemplateSummary[];
+  paging?: { next?: string };
+}

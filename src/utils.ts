@@ -8,19 +8,71 @@ export async function logOperationalEvent(params: {
   payload?: any;
 }): Promise<void> {
   console.log(`[${params.level.toUpperCase()}] ${params.eventType}: ${params.summary}`, params.payload);
-  // TODO: Implement persistent logging in Phase 1
+  // Persist to the OperationalLog table. Never let logging break the caller.
+  try {
+    await prisma.operationalLog.create({
+      data: {
+        workspaceId: params.workspaceId,
+        eventType: params.eventType,
+        level: params.level,
+        summary: params.summary,
+        payload: (params.payload ?? {}) as any,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to persist operational log", error);
+  }
+}
+
+/**
+ * Audit log = an OperationalLog with an `audit.<action>` event type and the
+ * acting user recorded in the payload. Surfaced via GET /ops/logs?eventType=audit.
+ */
+export async function logAuditEvent(params: {
+  workspaceId: string;
+  actorId?: string | null;
+  action: string;
+  summary: string;
+  payload?: any;
+}): Promise<void> {
+  await logOperationalEvent({
+    workspaceId: params.workspaceId,
+    eventType: `audit.${params.action}`,
+    level: "info",
+    summary: params.summary,
+    payload: { ...(params.payload ?? {}), actorId: params.actorId ?? null },
+  });
 }
 
 export async function logFailedSend(params: {
   workspaceId: string;
   channel: string;
+  targetType?: string;
+  targetId?: string;
   destination: string;
   messageBody?: string;
   templateName?: string;
+  errorMessage?: string;
   payload?: any;
 }): Promise<void> {
   console.log(`Failed send logged: ${params.channel} to ${params.destination}`);
-  // TODO: Implement persistent failed send logging in Phase 1
+  try {
+    await prisma.failedSendLog.create({
+      data: {
+        workspaceId: params.workspaceId,
+        channel: params.channel,
+        targetType: params.targetType ?? "workspace",
+        targetId: params.targetId ?? null,
+        destination: params.destination,
+        templateName: params.templateName ?? null,
+        messageBody: params.messageBody ?? null,
+        errorMessage: params.errorMessage ?? "Unknown error",
+        payload: (params.payload ?? {}) as any,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to persist failed send log", error);
+  }
 }
 
 export function getErrorMessage(error: unknown): string {

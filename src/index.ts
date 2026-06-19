@@ -4,6 +4,7 @@ import { createApp } from "./bootstrap";
 import { initializeQueues, shutdownQueues } from "./queue";
 import { prisma } from "./prisma";
 import { ensureSession } from "./state";
+import { startCampaignScheduler, stopCampaignScheduler } from "./modules/campaigns/campaigns.scheduler";
 
 const port = Number(process.env.PORT || 3001);
 const startupRetryDelaysMs = [1000, 2000, 5000, 10000];
@@ -21,8 +22,13 @@ function isTransientDatabaseStartupError(error: unknown): boolean {
   return (
     code === "EAI_AGAIN" ||
     code === "P1001" ||
+    // P1017: pooled Postgres (e.g. Prisma Data Proxy) closes the connection on a
+    // cold first transaction. Reconnecting on retry succeeds, so treat as transient.
+    code === "P1017" ||
     message.includes("EAI_AGAIN") ||
     message.includes("Can't reach database server") ||
+    message.includes("Server has closed the connection") ||
+    message.includes("ConnectionClosed") ||
     message.includes("Temporary failure in name resolution")
   );
 }
@@ -70,9 +76,13 @@ async function start() {
       console.log(`WaBiz API listening on http://localhost:${port}`);
     });
 
+    // Fire due scheduled campaigns on an in-process polling loop.
+    startCampaignScheduler(prisma);
+
     // Graceful shutdown
     process.on("SIGTERM", async () => {
       console.log("SIGTERM received, gracefully shutting down...");
+      stopCampaignScheduler();
       await shutdownQueues();
       server.close(() => {
         console.log("Server closed");
@@ -82,6 +92,7 @@ async function start() {
 
     process.on("SIGINT", async () => {
       console.log("SIGINT received, gracefully shutting down...");
+      stopCampaignScheduler();
       await shutdownQueues();
       server.close(() => {
         console.log("Server closed");

@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import type {
   ListConversationsInput,
   UpdateConversationInput,
@@ -12,44 +12,33 @@ export async function listConversations(
   filters: ListConversationsInput,
   db: PrismaClient
 ) {
-  const where: any = { workspaceId };
+  const where: Prisma.ConversationWhereInput = { workspaceId };
 
   if (filters.search) {
     where.OR = [
-      { subject: { contains: filters.search, mode: "insensitive" } },
+      { displayName: { contains: filters.search, mode: "insensitive" } },
+      { phone: { contains: filters.search } },
       { contact: { name: { contains: filters.search, mode: "insensitive" } } },
     ];
   }
+  if (filters.status) where.status = filters.status;
+  if (filters.assignedTo) where.assignedTo = filters.assignedTo;
+  if (filters.unassigned) where.assignedTo = null;
 
-  if (filters.status) {
-    where.status = filters.status;
-  }
-
-  if (filters.assignedTo) {
-    where.assignedTo = filters.assignedTo;
-  }
-
-  const orderBy: any = {};
-  switch (filters.sortBy) {
-    case "createdAt":
-      orderBy.createdAt = "desc";
-      break;
-    case "lastMessage":
-      orderBy.updatedAt = "desc";
-      break;
-    case "updatedAt":
-    default:
-      orderBy.updatedAt = "desc";
-  }
+  const orderBy: Prisma.ConversationOrderByWithRelationInput =
+    filters.sortBy === "createdAt"
+      ? { createdAt: "desc" }
+      : filters.sortBy === "updatedAt"
+        ? { updatedAt: "desc" }
+        : { lastMessageAt: "desc" };
 
   const [total, conversations] = await Promise.all([
     db.conversation.count({ where }),
     db.conversation.findMany({
       where,
       include: {
-        contact: true,
-        assignedUser: true,
-        messages: { take: 1, orderBy: { createdAt: "desc" } },
+        contact: { select: { id: true, name: true, phone: true, optInStatus: true } },
+        messages: { take: 1, orderBy: { sentAt: "desc" } },
       },
       orderBy,
       take: filters.limit,
@@ -61,20 +50,22 @@ export async function listConversations(
 }
 
 export async function getConversation(id: string, workspaceId: string, db: PrismaClient) {
-  const conversation = await db.conversation.findUnique({
-    where: { id },
+  const conversation = await db.conversation.findFirst({
+    where: { id, workspaceId },
     include: {
       contact: true,
-      assignedUser: true,
-      messages: { orderBy: { createdAt: "asc" }, take: 50 },
+      messages: { orderBy: { sentAt: "asc" }, take: 200 },
       notes: { orderBy: { createdAt: "desc" } },
+      events: { orderBy: { createdAt: "desc" }, take: 50 },
     },
   });
+  if (!conversation) throw new Error("Conversation not found");
+  return conversation;
+}
 
-  if (!conversation || conversation.workspaceId !== workspaceId) {
-    throw new Error("Conversation not found");
-  }
-
+async function ensureConversation(id: string, workspaceId: string, db: PrismaClient) {
+  const conversation = await db.conversation.findFirst({ where: { id, workspaceId } });
+  if (!conversation) throw new Error("Conversation not found");
   return conversation;
 }
 
@@ -84,52 +75,66 @@ export async function updateConversation(
   input: UpdateConversationInput,
   db: PrismaClient
 ) {
-  const conversation = await db.conversation.findUnique({
-    where: { id },
-  });
+  const conversation = await ensureConversation(id, workspaceId, db);
 
-  if (!conversation || conversation.workspaceId !== workspaceId) {
-    throw new Error("Conversation not found");
+  if (input.assignedTo) {
+    const user = await db.user.findFirst({ where: { id: input.assignedTo, workspaceId } });
+    if (!user) throw new Error("User not found");
   }
 
-  return await db.conversation.update({
+  const updated = await db.conversation.update({
     where: { id },
     data: {
-      status: input.status,
-      assignedTo: input.assignedTo,
-      subject: input.subject,
-      tags: input.tags,
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.assignedTo !== undefined ? { assignedTo: input.assignedTo } : {}),
     },
-    include: { contact: true, assignedUser: true },
+    include: { contact: true },
   });
+
+  if (input.status !== undefined && input.status !== conversation.status) {
+    await db.conversationEvent.create({
+      data: {
+        workspaceId,
+        conversationId: id,
+        eventType: "status_changed",
+        summary: `Status changed to ${input.status}`,
+      },
+    });
+  }
+
+  return updated;
 }
 
+/** Record an agent-authored outbound message into the conversation timeline. */
 export async function addMessage(
   conversationId: string,
   workspaceId: string,
   input: AddMessageInput,
   db: PrismaClient
 ) {
-  const conversation = await db.conversation.findUnique({
-    where: { id: conversationId },
-  });
+  await ensureConversation(conversationId, workspaceId, db);
 
-  if (!conversation || conversation.workspaceId !== workspaceId) {
-    throw new Error("Conversation not found");
-  }
-
-  return await db.conversationMessage.create({
+  const message = await db.conversationMessage.create({
     data: {
+      workspaceId,
       conversationId,
-      body: input.body,
+      direction: "outbound",
       messageType: input.messageType,
-      mediaUrl: input.mediaUrl,
-      mediaType: input.mediaType,
-      templateId: input.templateId,
-      templateParams: input.templateParams,
-      isFromUser: true,
+      body: input.body,
+      status: "sent",
+      sentAt: new Date(),
     },
   });
+
+  await db.conversation.update({
+    where: { id: conversationId },
+    data: {
+      lastMessagePreview: input.body.length > 140 ? `${input.body.slice(0, 137)}...` : input.body,
+      lastMessageAt: new Date(),
+    },
+  });
+
+  return message;
 }
 
 export async function assignConversation(
@@ -138,19 +143,29 @@ export async function assignConversation(
   input: AssignConversationInput,
   db: PrismaClient
 ) {
-  const conversation = await db.conversation.findUnique({
-    where: { id },
-  });
+  await ensureConversation(id, workspaceId, db);
 
-  if (!conversation || conversation.workspaceId !== workspaceId) {
-    throw new Error("Conversation not found");
+  if (input.userId) {
+    const user = await db.user.findFirst({ where: { id: input.userId, workspaceId } });
+    if (!user) throw new Error("User not found");
   }
 
-  return await db.conversation.update({
+  const updated = await db.conversation.update({
     where: { id },
     data: { assignedTo: input.userId },
-    include: { contact: true, assignedUser: true },
+    include: { contact: true },
   });
+
+  await db.conversationEvent.create({
+    data: {
+      workspaceId,
+      conversationId: id,
+      eventType: "assignment_changed",
+      summary: input.userId ? `Assigned to ${input.userId}` : "Unassigned",
+    },
+  });
+
+  return updated;
 }
 
 export async function addNote(
@@ -159,18 +174,14 @@ export async function addNote(
   input: AddNoteInput,
   db: PrismaClient
 ) {
-  const conversation = await db.conversation.findUnique({
-    where: { id: conversationId },
-  });
+  await ensureConversation(conversationId, workspaceId, db);
 
-  if (!conversation || conversation.workspaceId !== workspaceId) {
-    throw new Error("Conversation not found");
-  }
-
-  return await db.conversationNote.create({
+  return db.conversationNote.create({
     data: {
+      workspaceId,
       conversationId,
-      content: input.content,
+      body: input.body,
+      authorName: input.authorName ?? "",
     },
   });
 }
@@ -180,16 +191,6 @@ export async function markConversationAsRead(
   workspaceId: string,
   db: PrismaClient
 ) {
-  const conversation = await db.conversation.findUnique({
-    where: { id },
-  });
-
-  if (!conversation || conversation.workspaceId !== workspaceId) {
-    throw new Error("Conversation not found");
-  }
-
-  return await db.conversation.update({
-    where: { id },
-    data: { unreadCount: 0 },
-  });
+  await ensureConversation(id, workspaceId, db);
+  return db.conversation.update({ where: { id }, data: { unreadCount: 0 } });
 }

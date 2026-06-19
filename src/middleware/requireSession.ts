@@ -19,7 +19,9 @@ export const requireSession = async (
       req.headers.authorization,
     );
     if (!context) {
-      throw new Error("Session required");
+      const err: any = new Error("Session required");
+      err.statusCode = 401;
+      throw err;
     }
     req.workspaceContext = context;
     next();

@@ -90,11 +90,15 @@ export async function createApp(): Promise<Express> {
   const adminRoutes = (await import("./modules/admin")).default;
   const walletRoutes = (await import("./modules/wallet")).default;
   const partnersRoutes = (await import("./modules/partners")).default;
+  const segmentsRoutes = (await import("./modules/segments")).default;
+  const linksRoutes = (await import("./modules/links")).default;
 
   app.use("/whatsapp", whatsappRoutes);
   app.use("/contacts", contactsRoutes);
   app.use("/templates", templatesRoutes);
   app.use("/campaigns", campaignsRoutes);
+  app.use("/segments", segmentsRoutes);
+  app.use("/links", linksRoutes);
   app.use("/conversations", conversationsRoutes);
   app.use("/leads", leadsRoutes);
   app.use("/automation", automationRoutes);

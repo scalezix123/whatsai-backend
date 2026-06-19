@@ -3,9 +3,10 @@ import { prisma } from "../../prisma";
 import { requireSession } from "../../middleware";
 import {
   listLeadsSchema,
+  createLeadSchema,
   updateLeadStatusSchema,
   addLeadNoteSchema,
-  createLeadSchema,
+  assignLeadSchema,
 } from "./leads.schemas";
 import {
   listLeads,
@@ -16,6 +17,7 @@ import {
   assignLead,
   getLeadsByContact,
 } from "./leads.service";
+import { logAuditEvent } from "../../utils";
 
 const router = Router();
 
@@ -29,20 +31,33 @@ router.get("/", requireSession, async (req, res, next) => {
   }
 });
 
-router.get("/:id", requireSession, async (req, res, next) => {
-  try {
-    const lead = await getLead(req.params.id, req.workspaceContext.workspaceId, prisma);
-    res.json({ data: lead });
-  } catch (error) {
-    next(error);
-  }
-});
-
 router.post("/", requireSession, async (req, res, next) => {
   try {
     const payload = createLeadSchema.parse(req.body);
     const lead = await createLead(req.workspaceContext.workspaceId, payload, prisma);
     res.status(201).json({ data: lead });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/contact/:contactId", requireSession, async (req, res, next) => {
+  try {
+    const leads = await getLeadsByContact(
+      req.params.contactId,
+      req.workspaceContext.workspaceId,
+      prisma
+    );
+    res.json({ data: leads });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:id", requireSession, async (req, res, next) => {
+  try {
+    const lead = await getLead(req.params.id, req.workspaceContext.workspaceId, prisma);
+    res.json({ data: lead });
   } catch (error) {
     next(error);
   }
@@ -66,13 +81,13 @@ router.patch("/:id/status", requireSession, async (req, res, next) => {
 router.post("/:id/notes", requireSession, async (req, res, next) => {
   try {
     const payload = addLeadNoteSchema.parse(req.body);
-    const note = await addLeadNote(
+    const lead = await addLeadNote(
       req.params.id,
       req.workspaceContext.workspaceId,
       payload,
       prisma
     );
-    res.status(201).json({ data: note });
+    res.status(201).json({ data: lead });
   } catch (error) {
     next(error);
   }
@@ -80,28 +95,21 @@ router.post("/:id/notes", requireSession, async (req, res, next) => {
 
 router.post("/:id/assign", requireSession, async (req, res, next) => {
   try {
-    const { userId } = req.body;
-    if (!userId) throw new Error("userId required");
+    const { userId } = assignLeadSchema.parse(req.body);
     const lead = await assignLead(
       req.params.id,
       req.workspaceContext.workspaceId,
       userId,
       prisma
     );
+    await logAuditEvent({
+      workspaceId: req.workspaceContext.workspaceId,
+      actorId: req.workspaceContext.userId,
+      action: "lead.assigned",
+      summary: userId ? `Lead ${req.params.id} assigned to ${userId}` : `Lead ${req.params.id} unassigned`,
+      payload: { leadId: req.params.id, assignedTo: userId },
+    });
     res.json({ data: lead });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.get("/contact/:contactId", requireSession, async (req, res, next) => {
-  try {
-    const leads = await getLeadsByContact(
-      req.params.contactId,
-      req.workspaceContext.workspaceId,
-      prisma
-    );
-    res.json({ data: leads });
   } catch (error) {
     next(error);
   }

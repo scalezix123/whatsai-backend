@@ -282,6 +282,260 @@ async function main() {
   const cGet = await req("GET", `/campaigns/${sentCampaignId}`);
   check("get campaign detail w/ stats", cGet.status === 200 && cGet.json?.data?.stats?.sent === 2, cGet.json?.data?.stats);
 
+  // ============ STAGE 5: LEADS + INBOX + WEBHOOKS ============
+  const workspaceRow = await prisma.contact.findUnique({ where: { id: r1 }, select: { workspaceId: true } });
+  const workspaceId = workspaceRow!.workspaceId;
+  const sessionUser = await prisma.user.findFirst({ where: { workspaceId }, select: { id: true } });
+
+  console.log("\n[leads]");
+  const leadCreate = await req("POST", "/leads", { contactId: r1, source: "manual", notes: "initial" });
+  check("create lead from contact 201", leadCreate.status === 201 && !!leadCreate.json?.data?.fullName && !!leadCreate.json?.data?.phone, leadCreate.json);
+  const leadId = leadCreate.json?.data?.id;
+  check("lead create rejects no identity", (await req("POST", "/leads", { source: "manual" })).status >= 400);
+  const leadList = await req("GET", "/leads?page=1&limit=10&status=new");
+  check("list leads (string paging + filter)", leadList.status === 200 && typeof leadList.json?.data?.total === "number", leadList.json);
+  const leadStatus = await req("PATCH", `/leads/${leadId}/status`, { status: "qualified", note: "spoke on call" });
+  check("update lead status + note appended", leadStatus.json?.data?.status === "qualified" && leadStatus.json?.data?.notes?.includes("spoke on call"), leadStatus.json?.data);
+  const leadNote = await req("POST", `/leads/${leadId}/notes`, { content: "follow up next week", authorName: "Agent" });
+  check("add lead note appends", leadNote.json?.data?.notes?.includes("follow up next week"), leadNote.json?.data?.notes);
+  const leadAssign = await req("POST", `/leads/${leadId}/assign`, { userId: sessionUser!.id });
+  check("assign lead to user", leadAssign.json?.data?.assignedTo === sessionUser!.id, leadAssign.json?.data?.assignedTo);
+  check("assign lead rejects unknown user", (await req("POST", `/leads/${leadId}/assign`, { userId: "nope" })).status >= 400);
+  const leadByContact = await req("GET", `/leads/contact/${r1}`);
+  check("leads by contact >= 1", (leadByContact.json?.data?.length ?? 0) >= 1, leadByContact.json?.data?.length);
+
+  console.log("\n[conversations]");
+  // Campaign sends already created outbound conversation messages for r1/r2.
+  const convSearch = await req("GET", `/conversations?search=1888${RUN}1`);
+  check("conversation exists for r1 (from campaign)", (convSearch.json?.data?.total ?? 0) >= 1, convSearch.json?.data?.total);
+  const convId = convSearch.json?.data?.conversations?.[0]?.id;
+  const convGet = await req("GET", `/conversations/${convId}`);
+  check("conversation has outbound template message", convGet.json?.data?.messages?.some((m: any) => m.direction === "outbound" && m.messageType === "template"), convGet.json?.data?.messages?.length);
+  check("list conversations (string paging)", (await req("GET", "/conversations?page=1&limit=10")).status === 200);
+  const convNote = await req("POST", `/conversations/${convId}/notes`, { body: "internal note", authorName: "Agent" });
+  check("add conversation note 201", convNote.status === 201 && convNote.json?.data?.body === "internal note", convNote.json);
+  const convMsg = await req("POST", `/conversations/${convId}/messages`, { body: "Thanks for reaching out!" });
+  check("add outbound agent message 201", convMsg.status === 201 && convMsg.json?.data?.direction === "outbound", convMsg.json);
+  const convAssign = await req("POST", `/conversations/${convId}/assign`, { userId: sessionUser!.id });
+  check("assign conversation to user", convAssign.json?.data?.assignedTo === sessionUser!.id, convAssign.json?.data?.assignedTo);
+  check("update conversation status -> resolved", (await req("PATCH", `/conversations/${convId}`, { status: "resolved" })).json?.data?.status === "resolved");
+  check("mark conversation read (unread=0)", (await req("POST", `/conversations/${convId}/mark-read`)).json?.data?.unreadCount === 0);
+
+  console.log("\n[webhooks]");
+  // Simulate a connected WABA so the webhook can resolve the workspace by phone_number_id.
+  const pnid = `pnid_${RUN}`;
+  await prisma.whatsAppConnection.create({
+    data: { workspaceId, phone_number_id: pnid, display_phone_number: "+19990000000", business_name: "E2E", business_portfolio: "E2E" },
+  });
+  const ts = () => `${Math.floor(Date.now() / 1000)}`;
+  const waEnvelope = (value: any) => ({
+    object: "whatsapp_business_account",
+    entry: [{ id: `entry_${RUN}`, changes: [{ field: "messages", value: { metadata: { phone_number_id: pnid, display_phone_number: "+19990000000" }, ...value } }] }],
+  });
+  const poll = async (fn: () => Promise<boolean>) => {
+    for (let i = 0; i < 30; i++) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 200)); }
+    return false;
+  };
+
+  // Inbound customer message -> appended to r1's conversation timeline.
+  const inboundId = `wamid_in_${RUN}`;
+  await req("POST", "/meta/webhook", waEnvelope({ messages: [{ id: inboundId, from: `1888${RUN}1`, type: "text", text: { body: "Hello from customer" }, timestamp: ts() }] }));
+  check("inbound webhook recorded in conversation", await poll(async () => {
+    const g = await req("GET", `/conversations/${convId}`);
+    return g.json?.data?.messages?.some((m: any) => m.metaMessageId === inboundId && m.direction === "inbound");
+  }));
+
+  // Delivery-status webhook -> recipient + conversation message become delivered (the loop).
+  // Pin to r1's recipient since convId is r1's conversation (recipient order isn't guaranteed).
+  const recMsgId = cGet.json?.data?.recipients?.find((r: any) => r.contactId === r1)?.metaMessageId;
+  await req("POST", "/meta/webhook", waEnvelope({ statuses: [{ id: recMsgId, status: "delivered", recipient_id: `1888${RUN}1`, timestamp: ts() }] }));
+  check("delivery webhook -> recipient delivered", await poll(async () => {
+    const g = await req("GET", `/campaigns/${sentCampaignId}`);
+    return g.json?.data?.recipients?.find((r: any) => r.metaMessageId === recMsgId)?.status === "delivered";
+  }));
+  check("delivery webhook -> conversation message delivered",
+    (await req("GET", `/conversations/${convId}`)).json?.data?.messages?.some((m: any) => m.metaMessageId === recMsgId && m.status === "delivered"));
+
+  // Inbound STOP keyword -> contact opted out (Stage 2 consent integration).
+  await req("POST", "/meta/webhook", waEnvelope({ messages: [{ id: `wamid_stop_${RUN}`, from: `1888${RUN}2`, type: "text", text: { body: "STOP" }, timestamp: ts() }] }));
+  check("inbound STOP keyword opts contact out", await poll(async () => {
+    const g = await req("GET", `/contacts/${r2}`);
+    return g.json?.data?.optInStatus === "opt_out";
+  }));
+
+  // ============ STAGE 6: RBAC + OPERATIONAL/AUDIT LOGS ============
+  console.log("\n[rbac]");
+  // New signups are ADMIN (workspace owner), so admin/ops routes work.
+  check("ADMIN can GET /admin/users", (await req("GET", "/admin/users")).status === 200);
+  check("ADMIN can GET /ops/logs", (await req("GET", "/ops/logs?page=1&limit=5")).status === 200);
+
+  // Demote to USER -> observability/admin routes must 403.
+  await prisma.user.update({ where: { id: sessionUser!.id }, data: { role: "USER" } });
+  check("USER denied /ops/logs (403)", (await req("GET", "/ops/logs")).status === 403);
+  check("USER denied /ops/failed-sends (403)", (await req("GET", "/ops/failed-sends")).status === 403);
+  check("USER denied /admin/users (403)", (await req("GET", "/admin/users")).status === 403);
+  // CRUD remains open to USER role.
+  check("USER can still list contacts", (await req("GET", "/contacts?page=1&limit=1")).status === 200);
+  // Restore ADMIN.
+  await prisma.user.update({ where: { id: sessionUser!.id }, data: { role: "ADMIN" } });
+  check("ADMIN restored -> /ops/logs 200", (await req("GET", "/ops/logs")).status === 200);
+
+  console.log("\n[logs]");
+  const auditLogs = await req("GET", "/ops/logs?eventType=audit&limit=50");
+  check("audit logs persisted (>=1)", (auditLogs.json?.data?.total ?? 0) >= 1, auditLogs.json?.data?.total);
+  check("audit log carries actorId + audit.* type", auditLogs.json?.data?.logs?.some((l: any) => l.eventType.startsWith("audit.") && l.payload?.actorId), auditLogs.json?.data?.logs?.[0]);
+  check("campaign.sent audit present", auditLogs.json?.data?.logs?.some((l: any) => l.eventType === "audit.campaign.sent"), auditLogs.json?.data?.logs?.map((l: any) => l.eventType));
+  check("ops logs level filter 200", (await req("GET", "/ops/logs?level=info")).status === 200);
+  const failedSends = await req("GET", "/ops/failed-sends?page=1&limit=10");
+  check("list failed-sends 200", failedSends.status === 200 && typeof failedSends.json?.data?.total === "number", failedSends.json);
+  const webhookEvents = await req("GET", "/ops/webhook-events?page=1&limit=10");
+  check("list webhook-events 200", webhookEvents.status === 200 && typeof webhookEvents.json?.data?.total === "number", webhookEvents.json);
+
+  console.log("\n[audit]");
+  // Auditable action: create then delete a throwaway contact.
+  const tmpContact = (await req("POST", "/contacts", { name: "Temp Audit", phone: `+1777${RUN}9` })).json?.data?.id;
+  await req("DELETE", `/contacts/${tmpContact}`);
+  check("contact.deleted audit recorded", await poll(async () => {
+    const g = await req("GET", "/ops/logs?eventType=audit.contact.deleted&limit=20");
+    return g.json?.data?.logs?.some((l: any) => l.payload?.contactId === tmpContact);
+  }));
+  check("lead.assigned audit recorded", (await req("GET", "/ops/logs?eventType=audit.lead.assigned&limit=10")).json?.data?.total >= 1);
+
+  // ============ STAGE 7: SCHEDULER + WEBHOOK DEDUP + META TEMPLATE SYNC ============
+  console.log("\n[scheduled-dispatch]");
+  // A campaign scheduled in the past must fire when the sweep runs; a future one must not.
+  const cPast = await req("POST", "/campaigns", {
+    name: `PastSched ${RUN}`,
+    templateId: tid,
+    recipients: [{ contactId: r1 }],
+    ...goodParams,
+    scheduledFor: new Date(Date.now() - 60_000).toISOString(),
+    sendNow: false,
+  });
+  check("past-scheduled created as scheduled", cPast.json?.data?.status === "scheduled", cPast.json?.data?.status);
+  const pastId = cPast.json?.data?.id;
+  const due = await req("POST", "/campaigns/dispatch-due");
+  check("dispatch-due fires the due campaign", (due.json?.data?.dispatched ?? []).includes(pastId), due.json?.data);
+  const pastGet = await req("GET", `/campaigns/${pastId}`);
+  check("due campaign now delivered (1 sent)", pastGet.json?.data?.status === "delivered" && pastGet.json?.data?.stats?.sent === 1, pastGet.json?.data?.stats);
+  const futureGet = await req("GET", `/campaigns/${cSched.json?.data?.id}`);
+  check("future-scheduled untouched (still scheduled)", futureGet.json?.data?.status === "scheduled", futureGet.json?.data?.status);
+
+  console.log("\n[webhook-dedup]");
+  // Posting the exact same event twice must be processed once (persistent dedup).
+  const beforeProcessed = await prisma.processedWebhookEvent.count();
+  const dupId = `wamid_dup_${RUN}`;
+  const dupEnvelope = waEnvelope({ messages: [{ id: dupId, from: `1888${RUN}1`, type: "text", text: { body: "duplicate test" }, timestamp: ts() }] });
+  await req("POST", "/meta/webhook", dupEnvelope);
+  check("first delivery processed", await poll(async () => {
+    const g = await req("GET", `/conversations/${convId}`);
+    return g.json?.data?.messages?.some((m: any) => m.metaMessageId === dupId);
+  }));
+  await req("POST", "/meta/webhook", dupEnvelope); // identical redelivery
+  await new Promise((r) => setTimeout(r, 800));
+  const afterProcessed = await prisma.processedWebhookEvent.count();
+  check("redelivery deduped (exactly 1 ProcessedWebhookEvent)", afterProcessed - beforeProcessed === 1, { before: beforeProcessed, after: afterProcessed });
+  const convAfterDup = await req("GET", `/conversations/${convId}`);
+  check("redelivery -> single inbound message", (convAfterDup.json?.data?.messages?.filter((m: any) => m.metaMessageId === dupId).length) === 1);
+  // Raw capture populates the ops feed.
+  check("webhook-events feed populated (>=1)", ((await req("GET", "/ops/webhook-events?page=1&limit=5")).json?.data?.total ?? 0) >= 1);
+
+  console.log("\n[template-meta]");
+  // No WABA is connected (the seeded connection has no wabaId), so submit/sync fall back gracefully.
+  const draftForSubmit = await req("POST", "/templates", { name: `submit_${RUN}`, category: "utility", language: "en", body: "Hi {{1}}, your code is {{2}}", exampleValues: { "{{1}}": "Sam", "{{2}}": "123" } });
+  const submitId = draftForSubmit.json?.data?.id;
+  const submitRes = await req("POST", `/templates/${submitId}/submit`);
+  check("submit without WABA -> pending fallback", submitRes.json?.data?.status === "pending", submitRes.json);
+  const syncRes = await req("POST", "/templates/sync/meta");
+  check("sync without WABA -> note + updated:0", syncRes.json?.data?.note?.includes("No live") && syncRes.json?.data?.updated === 0, syncRes.json?.data);
+
+  // ============ PHASE 2: SEGMENTS + LINKS + RETARGET + ANALYTICS + RECURRENCE ============
+  console.log("\n[segments]");
+  const segTag = `SEG${RUN}`;
+  await req("POST", "/contacts/tags", { name: segTag, color: "#1AA" });
+  const s1 = (await req("POST", "/contacts", { name: "Seg1", phone: `+1999${RUN}1`, optInStatus: "opt_in" })).json?.data?.id;
+  const s2 = (await req("POST", "/contacts", { name: "Seg2", phone: `+1999${RUN}2`, optInStatus: "opt_in" })).json?.data?.id;
+  const sOut = (await req("POST", "/contacts", { name: "SegOut", phone: `+1999${RUN}3`, optInStatus: "opt_out" })).json?.data?.id;
+  for (const id of [s1, s2, sOut]) await req("POST", `/contacts/${id}/tags/${segTag}`);
+
+  const segCreate = await req("POST", "/segments", {
+    name: `Seg ${RUN}`,
+    filters: { match: "all", conditions: [{ field: "tag", op: "hasAny", value: [segTag] }] },
+  });
+  check("create segment 201", segCreate.status === 201, segCreate.json);
+  const segId = segCreate.json?.data?.id;
+  check("duplicate segment name rejected", (await req("POST", "/segments", { name: `Seg ${RUN}`, filters: { match: "all", conditions: [] } })).status >= 400);
+
+  const segPreview = await req("POST", `/segments/${segId}/preview`, { sampleSize: 10 });
+  check("segment preview counts all 3 tagged", segPreview.json?.data?.total === 3, segPreview.json?.data?.total);
+  const segList = await req("GET", "/segments");
+  check("segment list carries live contactCount", segList.json?.data?.segments?.find((s: any) => s.id === segId)?.contactCount === 3, segList.json?.data);
+  const adhoc = await req("POST", "/segments/preview", { filters: { match: "all", conditions: [{ field: "optInStatus", op: "eq", value: "opt_in" }, { field: "tag", op: "hasAny", value: [segTag] }] } });
+  check("ad-hoc preview (opt_in AND tag) counts 2", adhoc.json?.data?.total === 2, adhoc.json?.data?.total);
+
+  // Campaign from a segment: only the 2 opted-in tagged contacts become recipients.
+  const segCampaign = await req("POST", "/campaigns", { name: `SegCamp ${RUN}`, templateId: tid, segmentId: segId, ...goodParams, sendNow: true });
+  check("campaign from segment 201", segCampaign.status === 201, segCampaign.json?.error ?? segCampaign.status);
+  check("segment campaign excludes opted-out (2 recipients)", segCampaign.json?.data?.stats?.total === 2, segCampaign.json?.data?.stats);
+  const segCampaignId = segCampaign.json?.data?.id;
+  check("reject two audience sources", (await req("POST", "/campaigns", { name: "x", templateId: tid, segmentId: segId, recipients: [{ contactId: s1 }], ...goodParams })).status >= 400);
+
+  console.log("\n[links]");
+  const linkCreate = await req("POST", "/links", { originalUrl: "https://example.com/promo", title: "Promo", campaignId: segCampaignId });
+  check("create tracked link 201 + shortUrl", linkCreate.status === 201 && typeof linkCreate.json?.data?.shortUrl === "string", linkCreate.json);
+  const linkCode = linkCreate.json?.data?.code;
+  const linkId = linkCreate.json?.data?.id;
+
+  const clickOnce = (cid?: string) =>
+    fetch(`${BASE}/t/${linkCode}?wid=${workspaceId}${cid ? `&cid=${cid}` : ""}`, { redirect: "manual" });
+  const c1 = await clickOnce(s1);
+  check("public click redirects (3xx) to destination", c1.status >= 300 && c1.status < 400 && (c1.headers.get("location") || "").includes("example.com"), { status: c1.status, loc: c1.headers.get("location") });
+  await clickOnce(s1); // same contact again -> total++ but unique stays
+  await clickOnce(s2);
+
+  let la: any = null;
+  for (let i = 0; i < 25; i++) {
+    la = (await req("GET", `/links/${linkId}/analytics`)).json?.data;
+    if ((la?.totalClicks ?? 0) >= 3) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  check("link analytics totalClicks=3", la?.totalClicks === 3, la?.totalClicks);
+  check("link analytics uniqueClicks=2 (by contact)", la?.uniqueClicks === 2, la?.uniqueClicks);
+
+  console.log("\n[retarget]");
+  const rtClicked = await req("POST", "/campaigns", { name: `RT-clicked ${RUN}`, templateId: tid, retarget: { fromCampaignId: segCampaignId, clicked: true }, ...goodParams, sendNow: false });
+  check("retarget clicked builds audience (2)", rtClicked.status === 201 && rtClicked.json?.data?.stats?.total === 2, rtClicked.json?.error ?? rtClicked.json?.data?.stats);
+  const rtSent = await req("POST", "/campaigns", { name: `RT-sent ${RUN}`, templateId: tid, retarget: { fromCampaignId: segCampaignId, statuses: ["sent"] }, ...goodParams, sendNow: false });
+  check("retarget by status=sent builds audience (2)", rtSent.json?.data?.stats?.total === 2, rtSent.json?.data?.stats);
+  const rtNone = await req("POST", "/campaigns", { name: `RT-none ${RUN}`, templateId: tid, retarget: { fromCampaignId: segCampaignId, statuses: ["failed"] }, ...goodParams, sendNow: false });
+  check("retarget with no matches rejected", rtNone.status >= 400, rtNone.status);
+
+  console.log("\n[campaign-analytics]");
+  const analytics = await req("GET", `/campaigns/${segCampaignId}/analytics`);
+  check("analytics funnel total=2", analytics.json?.data?.funnel?.total === 2, analytics.json?.data?.funnel);
+  check("analytics clicks attributed (3 total / 2 unique)", analytics.json?.data?.clicks?.total === 3 && analytics.json?.data?.clicks?.unique === 2, analytics.json?.data?.clicks);
+  check("analytics rates present", typeof analytics.json?.data?.rates?.clickThroughRate === "number", analytics.json?.data?.rates);
+
+  console.log("\n[recurring]");
+  const rec = await req("POST", "/campaigns", {
+    name: `Recurring ${RUN}`,
+    templateId: tid,
+    segmentId: segId,
+    ...goodParams,
+    scheduledFor: new Date(Date.now() - 60_000).toISOString(),
+    recurrence: { freq: "daily", interval: 1 },
+    sendNow: false,
+  });
+  check("recurring created as scheduled", rec.json?.data?.status === "scheduled", rec.json?.data?.status);
+  check("recurrence without scheduledFor rejected", (await req("POST", "/campaigns", { name: "x", templateId: tid, segmentId: segId, ...goodParams, recurrence: { freq: "daily", interval: 1 } })).status >= 400);
+  const recId = rec.json?.data?.id;
+  await req("POST", "/campaigns/dispatch-due");
+  const recGet = await req("GET", `/campaigns/${recId}`);
+  check("recurring run dispatched (delivered)", recGet.json?.data?.status === "delivered", recGet.json?.data?.status);
+  const afterList = await req("GET", "/campaigns?page=1&limit=50&status=scheduled");
+  const clone = afterList.json?.data?.campaigns?.find((c: any) => c.name === `Recurring ${RUN}` && c.id !== recId);
+  check("recurring cloned next occurrence (future scheduled)", !!clone && new Date(clone.scheduledFor).getTime() > Date.now(), clone?.scheduledFor);
+
   console.log(`\n=== RESULT: ${pass} passed, ${fail} failed ===`);
   await prisma.$disconnect();
   process.exit(fail === 0 ? 0 : 1);

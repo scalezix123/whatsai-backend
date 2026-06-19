@@ -1,40 +1,37 @@
 import { z } from "zod";
 
-export const listConversationsSchema = z.object({
-  page: z.number().int().min(1).default(1),
-  limit: z.number().int().min(1).max(100).default(20),
-  search: z.string().optional(),
-  status: z.enum(["open", "closed", "archived"]).optional(),
-  assignedTo: z.string().optional(),
-  sortBy: z.enum(["createdAt", "updatedAt", "lastMessage"]).default("updatedAt"),
-});
+export const conversationStatusEnum = z.enum(["open", "pending", "resolved"]);
 
-export const getConversationSchema = z.object({
-  id: z.string(),
+export const listConversationsSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().optional(),
+  status: conversationStatusEnum.optional(),
+  assignedTo: z.string().optional(),
+  unassigned: z.coerce.boolean().optional(),
+  sortBy: z.enum(["createdAt", "updatedAt", "lastMessage"]).default("lastMessage"),
 });
 
 export const updateConversationSchema = z.object({
-  status: z.enum(["open", "closed", "archived"]).optional(),
-  assignedTo: z.string().optional(),
-  subject: z.string().optional(),
-  tags: z.array(z.string()).optional(),
+  status: conversationStatusEnum.optional(),
+  assignedTo: z.string().nullable().optional(),
 });
 
+// Agent-authored outbound message recorded into the timeline.
 export const addMessageSchema = z.object({
   body: z.string().min(1),
-  messageType: z.enum(["text", "image", "file", "template"]).default("text"),
-  mediaUrl: z.string().optional(),
-  mediaType: z.enum(["image", "video", "audio", "document"]).optional(),
-  templateId: z.string().optional(),
-  templateParams: z.record(z.string()).optional(),
+  messageType: z
+    .enum(["text", "image", "video", "audio", "document", "template"])
+    .default("text"),
 });
 
 export const assignConversationSchema = z.object({
-  userId: z.string(),
+  userId: z.string().nullable(),
 });
 
 export const addNoteSchema = z.object({
-  content: z.string().min(1),
+  body: z.string().min(1),
+  authorName: z.string().optional(),
 });
 
 export type ListConversationsInput = z.infer<typeof listConversationsSchema>;

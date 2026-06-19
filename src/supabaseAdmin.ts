@@ -7,6 +7,7 @@ export async function getWorkspaceContextFromRequestAuthHeader(authorizationHead
         select: {
           id: true,
           workspaceId: true,
+          role: true,
         },
       },
     },
@@ -20,5 +21,6 @@ export async function getWorkspaceContextFromRequestAuthHeader(authorizationHead
   return {
     userId: user.id,
     workspaceId: user.workspaceId,
+    role: user.role,
   };
 }

@@ -1,4 +1,4 @@
-import { PrismaClient, Prisma } from "@prisma/client";
+import { PrismaClient, Prisma, TemplateStatus } from "@prisma/client";
 import type {
   CreateTemplateInput,
   UpdateTemplateInput,
@@ -9,6 +9,118 @@ import {
   validateTemplateParameters,
   renderTemplatePreview,
 } from "./templates.utils";
+import { getActiveMetaAuthorization } from "../../utils";
+import {
+  createMetaMessageTemplate,
+  listMetaMessageTemplates,
+  mapTemplateLanguageToMetaCode,
+  type MetaTemplateComponent,
+} from "../../meta";
+
+// ----------------------------------------------------------------------------
+// Meta Graph API integration helpers
+// ----------------------------------------------------------------------------
+
+type TemplateRecord = {
+  name: string;
+  language: string;
+  category: string;
+  body: string;
+  headerType?: string | null;
+  headerText?: string | null;
+  footerText?: string | null;
+  buttons?: unknown;
+  exampleValues?: unknown;
+};
+
+/** Resolve the access token + WABA id needed to talk to the Graph API, or null. */
+async function getWabaContext(
+  workspaceId: string,
+  db: PrismaClient
+): Promise<{ accessToken: string; wabaId: string } | null> {
+  const [auth, connection] = await Promise.all([
+    getActiveMetaAuthorization(workspaceId),
+    db.whatsAppConnection.findFirst({ where: { workspaceId } }),
+  ]);
+  if (auth?.accessToken && connection?.wabaId) {
+    return { accessToken: auth.accessToken, wabaId: connection.wabaId };
+  }
+  return null;
+}
+
+/** Ascending unique `{{n}}` placeholders within a single string. */
+function placeholdersIn(text: string | null | undefined): string[] {
+  if (!text) return [];
+  const found = new Set<string>();
+  const re = /\{\{\s*([0-9]+)\s*\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) found.add(`{{${m[1]}}}`);
+  return [...found].sort(
+    (a, b) => Number(a.replace(/\D/g, "")) - Number(b.replace(/\D/g, ""))
+  );
+}
+
+/** Map a local lowercase template status... from Meta's uppercase status set. */
+function mapMetaStatusToLocal(status: string): TemplateStatus {
+  switch (status.toUpperCase()) {
+    case "APPROVED":
+      return TemplateStatus.approved;
+    case "REJECTED":
+      return TemplateStatus.rejected;
+    default:
+      // PENDING, IN_APPEAL, PENDING_DELETION, FLAGGED, etc. -> treat as pending.
+      return TemplateStatus.pending;
+  }
+}
+
+function mapButtonToMeta(b: any): Record<string, unknown> {
+  const type = String(b?.type ?? "QUICK_REPLY").toUpperCase();
+  if (type === "URL") return { type: "URL", text: b.text, url: b.url };
+  if (type === "PHONE_NUMBER")
+    return { type: "PHONE_NUMBER", text: b.text, phone_number: b.phone_number ?? b.phone };
+  return { type: "QUICK_REPLY", text: b.text };
+}
+
+/** Build Meta's `components` payload from a local template record. */
+function buildMetaComponents(template: TemplateRecord): MetaTemplateComponent[] {
+  const components: MetaTemplateComponent[] = [];
+  const examples = (template.exampleValues ?? {}) as Record<string, string>;
+
+  // HEADER (text headers only; media headers need handles we don't store).
+  if (template.headerType === "text" && template.headerText) {
+    const header: MetaTemplateComponent = {
+      type: "HEADER",
+      format: "TEXT",
+      text: template.headerText,
+    };
+    const headerVars = placeholdersIn(template.headerText);
+    if (headerVars.length > 0) {
+      header.example = { header_text: headerVars.map((t) => examples[t] ?? "Sample") };
+    }
+    components.push(header);
+  }
+
+  // BODY (required).
+  const body: MetaTemplateComponent = { type: "BODY", text: template.body };
+  const bodyVars = placeholdersIn(template.body);
+  if (bodyVars.length > 0) {
+    body.example = { body_text: [bodyVars.map((t) => examples[t] ?? "Sample")] };
+  }
+  components.push(body);
+
+  // FOOTER.
+  if (template.footerText) {
+    components.push({ type: "FOOTER", text: template.footerText });
+  }
+
+  // BUTTONS.
+  const buttons = Array.isArray(template.buttons) ? (template.buttons as any[]) : [];
+  if (buttons.length > 0) {
+    components.push({ type: "BUTTONS", buttons: buttons.map(mapButtonToMeta) });
+  }
+
+  return components;
+}
 
 /**
  * Build the persisted shape for an update: only sets keys the caller provided.
@@ -217,9 +329,40 @@ export async function submitTemplateForApproval(
     );
   }
 
-  // TODO (Stage 3 follow-up): POST to Meta's message_templates endpoint here and
-  // store the returned id. For now we move to "pending" and let the sync job
-  // reconcile the real status.
+  // Live path: submit to Meta's message_templates endpoint and store the id +
+  // returned status. Falls back to a simulated "pending" when no WhatsApp
+  // Business Account is connected (dev/test), so the workflow stays exercisable.
+  const waba = await getWabaContext(workspaceId, db);
+  if (waba) {
+    let res;
+    try {
+      res = await createMetaMessageTemplate({
+        accessToken: waba.accessToken,
+        wabaId: waba.wabaId,
+        name: template.name,
+        language: mapTemplateLanguageToMetaCode(template.language),
+        category: template.category.toUpperCase(),
+        components: buildMetaComponents(template),
+      });
+    } catch (error) {
+      const err: any = new Error(
+        `Meta template submission failed: ${(error as Error).message}`
+      );
+      err.statusCode = 502;
+      throw err;
+    }
+    return db.messageTemplate.update({
+      where: { id },
+      data: {
+        status: res.status ? mapMetaStatusToLocal(res.status) : TemplateStatus.pending,
+        metaTemplateId: res.id ?? null,
+        rejectionReason: null,
+        syncedAt: new Date(),
+      },
+    });
+  }
+
+  // No live WABA -> simulate submission so the approval flow can be tested.
   return db.messageTemplate.update({
     where: { id },
     data: { status: "pending", rejectionReason: null },
@@ -227,20 +370,61 @@ export async function submitTemplateForApproval(
 }
 
 /**
- * Sync local template statuses with Meta. Currently a stub that records the sync
- * time; wire the real Graph API call in when credentials are available.
+ * Reconcile local template statuses against Meta. Lists the WABA's templates and
+ * updates each local row's status / rejection reason / metaTemplateId. Falls back
+ * to a no-op (timestamp only) when no WhatsApp Business Account is connected.
  */
 export async function syncTemplatesWithMeta(workspaceId: string, db: PrismaClient) {
-  const templates = await db.messageTemplate.findMany({ where: { workspaceId } });
+  const waba = await getWabaContext(workspaceId, db);
+  const locals = await db.messageTemplate.findMany({ where: { workspaceId } });
 
-  await db.messageTemplate.updateMany({
-    where: { workspaceId },
-    data: { syncedAt: new Date() },
+  if (!waba) {
+    await db.messageTemplate.updateMany({
+      where: { workspaceId },
+      data: { syncedAt: new Date() },
+    });
+    return {
+      synced: 0,
+      updated: 0,
+      syncedAt: new Date().toISOString(),
+      note: "No live WhatsApp Business Account connected; statuses unchanged.",
+    };
+  }
+
+  const remote = await listMetaMessageTemplates({
+    accessToken: waba.accessToken,
+    wabaId: waba.wabaId,
   });
+  const byId = new Map(remote.filter((r) => r.id).map((r) => [r.id, r]));
+  const byNameLang = new Map(
+    remote.map((r) => [`${r.name}:${(r.language ?? "").toLowerCase()}`, r])
+  );
+  const byName = new Map(remote.map((r) => [r.name, r]));
+
+  let updated = 0;
+  for (const t of locals) {
+    const metaLang = mapTemplateLanguageToMetaCode(t.language).toLowerCase();
+    const match =
+      (t.metaTemplateId ? byId.get(t.metaTemplateId) : undefined) ??
+      byNameLang.get(`${t.name}:${metaLang}`) ??
+      byName.get(t.name);
+    if (!match) continue;
+
+    await db.messageTemplate.update({
+      where: { id: t.id },
+      data: {
+        status: mapMetaStatusToLocal(match.status),
+        metaTemplateId: t.metaTemplateId ?? match.id,
+        rejectionReason: match.rejected_reason ?? null,
+        syncedAt: new Date(),
+      },
+    });
+    updated++;
+  }
 
   return {
-    synced: templates.length,
+    synced: remote.length,
+    updated,
     syncedAt: new Date().toISOString(),
-    note: "Meta Graph API sync not yet wired; statuses unchanged.",
   };
 }

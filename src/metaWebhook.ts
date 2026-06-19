@@ -1,3 +1,12 @@
+import { createHash } from "crypto";
+import { Prisma } from "@prisma/client";
+import { prisma } from "./prisma";
+import {
+  resolveWorkspaceIdByPhoneNumberId,
+  recordInboundMessage,
+  applyMessageStatusByMetaId,
+} from "./modules/conversations/conversations.ingest";
+
 interface MetaWebhookStatus {
   id?: string;
   status?: string;
@@ -159,24 +168,156 @@ export function summarizeMetaWebhookPayload(payload: unknown): SummarizedMetaWeb
   );
 }
 
-// Stub implementations for webhook processing
-const processedWebhookIds = new Set<string>();
-
+/**
+ * Persistent, idempotent webhook claim. Returns true the first time an event is
+ * seen and false on any redelivery — surviving restarts/redeploys, unlike the old
+ * in-memory Set (which also baked Date.now() into its key and so never matched).
+ *
+ * The fingerprint is a content hash of the summarized event: Meta redelivers the
+ * exact same payload, so a retry hashes identically, while genuinely new events
+ * (different message/lead ids) hash differently. The `fingerprint @unique`
+ * constraint makes the claim atomic across concurrent webhook deliveries.
+ */
 export async function claimWebhookEvent(event: any): Promise<boolean> {
-  const eventId = `${event.object}-${event.entryId}-${Date.now()}`;
-  if (processedWebhookIds.has(eventId)) {
-    return false;
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify(event))
+    .digest("hex");
+
+  try {
+    await prisma.processedWebhookEvent.create({
+      data: { fingerprint, eventType: event?.kind ?? "unknown" },
+    });
+    return true;
+  } catch (error) {
+    // Unique-violation => we've already processed this exact event.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return false;
+    }
+    // Any other DB error: fail OPEN (process the event). Every downstream write
+    // is independently idempotent (inbound by metaMessageId, leads by metaLeadId,
+    // statuses by id), so reprocessing is safe and beats silently dropping.
+    console.error("[webhook] dedup claim failed; processing anyway", error);
+    return true;
   }
-  processedWebhookIds.add(eventId);
-  return true;
 }
 
-export async function persistWhatsAppWebhookEvent(event: any): Promise<void> {
-  console.log("Processing WhatsApp webhook event:", event.kind);
-  // Stub implementation - extend in Phase 1 webhook implementation
+/** Persist a received webhook event for the admin observability feed. Best-effort. */
+async function captureWebhookEvent(
+  workspaceId: string,
+  eventType: string,
+  event: unknown
+): Promise<void> {
+  try {
+    await prisma.metaWebhookEvent.create({
+      data: {
+        workspaceId,
+        eventType,
+        payload: event as Prisma.InputJsonValue,
+      },
+    });
+  } catch (error) {
+    console.error("[webhook] failed to capture MetaWebhookEvent", error);
+  }
 }
 
-export async function persistLeadgenWebhookEvent(event: any): Promise<void> {
-  console.log("Processing leadgen webhook event:", event.kind);
-  // Stub implementation - extend in Phase 1 webhook implementation
+export async function persistWhatsAppWebhookEvent(
+  event: SummarizedWhatsAppWebhookEvent
+): Promise<void> {
+  const workspaceId = await resolveWorkspaceIdByPhoneNumberId(event.phoneNumberId, prisma);
+  if (!workspaceId) {
+    console.warn(
+      `[webhook] No workspace for phone_number_id=${event.phoneNumberId}; dropping event`
+    );
+    return;
+  }
+
+  // Observability: capture the event so /ops/webhook-events has data.
+  await captureWebhookEvent(workspaceId, "whatsapp", event);
+
+  // Inbound customer messages -> conversation timeline.
+  for (const message of event.inboundMessages) {
+    if (!message.from) continue;
+    await recordInboundMessage(
+      workspaceId,
+      {
+        from: message.from,
+        body: message.body,
+        type: message.type,
+        metaMessageId: message.id,
+        timestamp: message.timestamp,
+      },
+      prisma
+    );
+  }
+
+  // Delivery receipts -> campaign recipient + conversation message status.
+  for (const status of event.messageStatuses) {
+    if (!status.id || !status.status) continue;
+    await applyMessageStatusByMetaId(workspaceId, status.id, status.status, prisma);
+  }
+}
+
+function leadFieldValue(
+  fields: SummarizedLeadWebhookEvent["fieldData"],
+  ...names: string[]
+): string | null {
+  for (const name of names) {
+    const match = fields.find((f) => (f.name ?? "").toLowerCase() === name.toLowerCase());
+    if (match && match.values.length > 0) return match.values[0];
+  }
+  return null;
+}
+
+export async function persistLeadgenWebhookEvent(
+  event: SummarizedLeadWebhookEvent
+): Promise<void> {
+  // Resolve the workspace from a configured page/ad/form mapping.
+  const mapping = await prisma.metaLeadSourceMapping.findFirst({
+    where: {
+      OR: [
+        event.pageId ? { pageId: event.pageId } : undefined,
+        event.adId ? { adId: event.adId } : undefined,
+      ].filter(Boolean) as Prisma.MetaLeadSourceMappingWhereInput[],
+    },
+    select: { workspaceId: true, label: true },
+  });
+
+  if (!mapping) {
+    console.warn(
+      `[webhook] No lead-source mapping for page=${event.pageId} ad=${event.adId}; dropping leadgen`
+    );
+    return;
+  }
+
+  // Observability: capture the event so /ops/webhook-events has data.
+  await captureWebhookEvent(mapping.workspaceId, "leadgen", event);
+
+  const fullName =
+    leadFieldValue(event.fieldData, "full_name", "name") ?? "Unknown lead";
+  const phone = leadFieldValue(event.fieldData, "phone_number", "phone") ?? "";
+  const email = leadFieldValue(event.fieldData, "email") ?? "";
+
+  try {
+    await prisma.lead.create({
+      data: {
+        workspaceId: mapping.workspaceId,
+        metaLeadId: event.leadgenId ?? undefined,
+        fullName,
+        phone,
+        email,
+        status: "new",
+        source: "meta_ads",
+        sourceLabel: mapping.label,
+      },
+    });
+  } catch (error) {
+    // Unique violation on metaLeadId => already ingested; ignore.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return;
+    }
+    throw error;
+  }
 }

@@ -1,38 +1,57 @@
 import { z } from "zod";
 
+export const leadStatusEnum = z.enum(["new", "contacted", "qualified", "won", "lost"]);
+export const leadSourceEnum = z.enum([
+  "meta_ads",
+  "whatsapp_inbound",
+  "campaign",
+  "manual",
+  "organic",
+]);
+
 export const listLeadsSchema = z.object({
-  page: z.number().int().min(1).default(1),
-  limit: z.number().int().min(1).max(100).default(20),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().optional(),
-  status: z.enum(["new", "contacted", "qualified", "won", "lost"]).optional(),
-  source: z.enum(["meta_ads", "whatsapp", "campaign"]).optional(),
+  status: leadStatusEnum.optional(),
+  source: leadSourceEnum.optional(),
   assignedTo: z.string().optional(),
-  sortBy: z.enum(["createdAt", "updatedAt", "value"]).default("updatedAt"),
+  sortBy: z.enum(["createdAt", "updatedAt"]).default("updatedAt"),
 });
 
-export const getLeadSchema = z.object({
-  id: z.string(),
-});
+// A lead can be created from an existing contact (fullName/phone derived) or
+// from explicit identity fields.
+export const createLeadSchema = z
+  .object({
+    contactId: z.string().optional(),
+    fullName: z.string().min(1).optional(),
+    phone: z.string().min(1).optional(),
+    email: z.string().email().optional(),
+    source: leadSourceEnum.default("manual"),
+    sourceLabel: z.string().optional(),
+    notes: z.string().optional(),
+    conversationId: z.string().optional(),
+  })
+  .refine((v) => !!v.contactId || (!!v.fullName && !!v.phone), {
+    message: "Provide a contactId, or both fullName and phone",
+  });
 
 export const updateLeadStatusSchema = z.object({
-  status: z.enum(["new", "contacted", "qualified", "won", "lost"]),
-  reason: z.string().optional(),
+  status: leadStatusEnum,
+  note: z.string().optional(),
 });
 
 export const addLeadNoteSchema = z.object({
   content: z.string().min(1),
-  type: z.enum(["note", "activity", "follow_up"]).default("note"),
+  authorName: z.string().optional(),
 });
 
-export const createLeadSchema = z.object({
-  contactId: z.string(),
-  source: z.enum(["meta_ads", "whatsapp", "campaign"]),
-  value: z.number().optional(),
-  description: z.string().optional(),
-  metadata: z.record(z.any()).optional(),
+export const assignLeadSchema = z.object({
+  userId: z.string().nullable(),
 });
 
 export type ListLeadsInput = z.infer<typeof listLeadsSchema>;
+export type CreateLeadInput = z.infer<typeof createLeadSchema>;
 export type UpdateLeadStatusInput = z.infer<typeof updateLeadStatusSchema>;
 export type AddLeadNoteInput = z.infer<typeof addLeadNoteSchema>;
-export type CreateLeadInput = z.infer<typeof createLeadSchema>;
+export type AssignLeadInput = z.infer<typeof assignLeadSchema>;

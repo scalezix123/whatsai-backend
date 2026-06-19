@@ -35,6 +35,7 @@ import {
   getImportBatch,
   downloadImportErrors,
 } from "./contacts.service";
+import { logAuditEvent } from "../../utils";
 
 const router = Router();
 
@@ -89,6 +90,13 @@ router.patch("/:id", requireSession, async (req, res, next) => {
 router.delete("/:id", requireSession, async (req, res, next) => {
   try {
     await deleteContact(req.params.id, req.workspaceContext.workspaceId, prisma);
+    await logAuditEvent({
+      workspaceId: req.workspaceContext.workspaceId,
+      actorId: req.workspaceContext.userId,
+      action: "contact.deleted",
+      summary: `Contact ${req.params.id} deleted`,
+      payload: { contactId: req.params.id },
+    });
     res.status(204).send();
   } catch (error) {
     next(error);
