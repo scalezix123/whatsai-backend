@@ -39,7 +39,7 @@ router.post("/", requireSession, async (req, res, next) => {
 
 router.get("/:id/analytics", requireSession, async (req, res, next) => {
   try {
-    const result = await getLinkAnalytics(req.workspaceContext.workspaceId, req.params.id, prisma);
+    const result = await getLinkAnalytics(req.workspaceContext.workspaceId, String(req.params.id), prisma);
     res.json({ data: result });
   } catch (error) {
     next(error);

@@ -5,6 +5,9 @@ import {
   requestId,
   requireSession,
   errorNormalization,
+  requestLogging,
+  rateLimit,
+  securityHeaders,
 } from "./middleware/index";
 import { generateOpenAPISpec } from "./openapi";
 
@@ -15,6 +18,9 @@ export async function createApp(): Promise<Express> {
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
   app.use(requestId());
+  app.use(requestLogging());
+  app.use(securityHeaders());
+  app.use(rateLimit());
 
   // Public routes (no session required)
   const authRoutes = (await import("./modules/auth")).default;
@@ -92,6 +98,20 @@ export async function createApp(): Promise<Express> {
   const partnersRoutes = (await import("./modules/partners")).default;
   const segmentsRoutes = (await import("./modules/segments")).default;
   const linksRoutes = (await import("./modules/links")).default;
+  const teamsRoutes = (await import("./modules/teams")).default;
+  const agentsRoutes = (await import("./modules/agents")).default;
+  const cannedRepliesRoutes = (await import("./modules/canned-replies")).default;
+  const assignmentRulesRoutes = (await import("./modules/assignment-rules")).default;
+  const businessHoursRoutes = (await import("./modules/business-hours")).default;
+  const realtimeRoutes = (await import("./modules/realtime")).default;
+  const aiAgentRoutes = (await import("./modules/ai-agent")).default;
+  const knowledgeBaseRoutes = (await import("./modules/knowledge-base")).default;
+  const paymentsRoutes = (await import("./modules/payments")).default;
+  const catalogueRoutes = (await import("./modules/catalogue")).default;
+  const growthRoutes = (await import("./modules/growth")).default;
+  const formsRoutes = (await import("./modules/forms")).default;
+  const commerceRoutes = (await import("./modules/commerce")).default;
+  const capiRoutes = (await import("./modules/capi")).default;
 
   app.use("/whatsapp", whatsappRoutes);
   app.use("/contacts", contactsRoutes);
@@ -106,6 +126,20 @@ export async function createApp(): Promise<Express> {
   app.use("/admin", adminRoutes);
   app.use("/wallet", walletRoutes);
   app.use("/partners", partnersRoutes);
+  app.use("/teams", teamsRoutes);
+  app.use("/agents", agentsRoutes);
+  app.use("/canned-replies", cannedRepliesRoutes);
+  app.use("/assignment-rules", assignmentRulesRoutes);
+  app.use("/business-hours", businessHoursRoutes);
+  app.use("/realtime", realtimeRoutes);
+  app.use("/ai-agent", aiAgentRoutes);
+  app.use("/knowledge-base", knowledgeBaseRoutes);
+  app.use("/payments", paymentsRoutes);
+  app.use("/catalogue", catalogueRoutes);
+  app.use("/growth", growthRoutes);
+  app.use("/forms", formsRoutes);
+  app.use("/commerce", commerceRoutes);
+  app.use("/capi", capiRoutes);
 
   // Error handler (must be last)
   app.use(errorNormalization);

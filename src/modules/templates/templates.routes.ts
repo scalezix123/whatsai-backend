@@ -45,7 +45,7 @@ router.post("/", requireSession, async (req, res, next) => {
 
 router.get("/:id", requireSession, async (req, res, next) => {
   try {
-    const template = await getTemplate(req.params.id, req.workspaceContext.workspaceId, prisma);
+    const template = await getTemplate(String(req.params.id), req.workspaceContext.workspaceId, prisma);
     res.json({ data: template });
   } catch (error) {
     next(error);
@@ -56,7 +56,7 @@ router.patch("/:id", requireSession, async (req, res, next) => {
   try {
     const payload = updateTemplateSchema.parse(req.body);
     const template = await updateTemplate(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       payload,
       prisma
@@ -69,7 +69,7 @@ router.patch("/:id", requireSession, async (req, res, next) => {
 
 router.delete("/:id", requireSession, async (req, res, next) => {
   try {
-    await deleteTemplate(req.params.id, req.workspaceContext.workspaceId, prisma);
+    await deleteTemplate(String(req.params.id), req.workspaceContext.workspaceId, prisma);
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -81,7 +81,7 @@ router.delete("/:id", requireSession, async (req, res, next) => {
 router.get("/:id/variables", requireSession, async (req, res, next) => {
   try {
     const result = await getTemplateVariables(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       prisma
     );
@@ -95,7 +95,7 @@ router.post("/:id/validate", requireSession, async (req, res, next) => {
   try {
     const { parameters } = validateParametersSchema.parse(req.body);
     const result = await validateParameters(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       parameters,
       prisma
@@ -110,7 +110,7 @@ router.post("/:id/preview", requireSession, async (req, res, next) => {
   try {
     const { parameters } = previewTemplateSchema.parse(req.body);
     const result = await previewTemplate(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       parameters,
       prisma
@@ -126,7 +126,7 @@ router.post("/:id/preview", requireSession, async (req, res, next) => {
 router.post("/:id/submit", requireSession, async (req, res, next) => {
   try {
     const template = await submitTemplateForApproval(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       prisma
     );

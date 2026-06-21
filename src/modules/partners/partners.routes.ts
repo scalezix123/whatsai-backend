@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { requireSession, requireRole } from "../../middleware";
+import { UserRole } from "@prisma/client";
 import {
   applyPartnerSchema,
   publicApplySchema,
@@ -24,9 +26,10 @@ import {
 } from "./partners.service";
 
 const router = Router();
+const adminOnly = requireRole([UserRole.OWNER, UserRole.ADMIN]);
 
 // POST /partners/apply
-router.post("/apply", async (req, res, next) => {
+router.post("/apply", requireSession, async (req, res, next) => {
   try {
     const payload = applyPartnerSchema.parse(req.body);
     const result = await applyPartner(payload);
@@ -48,7 +51,7 @@ router.post("/public-apply", async (req, res, next) => {
 });
 
 // GET /partners
-router.get("/", async (req, res, next) => {
+router.get("/", requireSession, async (req, res, next) => {
   try {
     const partners = await getPartners();
     res.json({ data: partners });
@@ -58,7 +61,7 @@ router.get("/", async (req, res, next) => {
 });
 
 // GET /partners/dashboard
-router.get("/dashboard", async (req, res, next) => {
+router.get("/dashboard", requireSession, async (req, res, next) => {
   try {
     const dashboard = await getPartnerDashboard();
     res.json({ data: dashboard });
@@ -68,9 +71,9 @@ router.get("/dashboard", async (req, res, next) => {
 });
 
 // GET /partners/:id
-router.get("/:id", async (req, res, next) => {
+router.get("/:id", requireSession, async (req, res, next) => {
   try {
-    const partner = await getPartner(req.params.id);
+    const partner = await getPartner(String(req.params.id));
     res.json({ data: partner });
   } catch (error) {
     next(error);
@@ -78,9 +81,9 @@ router.get("/:id", async (req, res, next) => {
 });
 
 // POST /partners/:id/approve
-router.post("/:id/approve", async (req, res, next) => {
+router.post("/:id/approve", requireSession, adminOnly, async (req, res, next) => {
   try {
-    const result = await approvePartner(req.params.id);
+    const result = await approvePartner(String(req.params.id));
     res.json({ data: result });
   } catch (error) {
     next(error);
@@ -88,9 +91,9 @@ router.post("/:id/approve", async (req, res, next) => {
 });
 
 // POST /partners/:id/reject
-router.post("/:id/reject", async (req, res, next) => {
+router.post("/:id/reject", requireSession, adminOnly, async (req, res, next) => {
   try {
-    const result = await rejectPartner(req.params.id);
+    const result = await rejectPartner(String(req.params.id));
     res.json({ data: result });
   } catch (error) {
     next(error);
@@ -98,10 +101,10 @@ router.post("/:id/reject", async (req, res, next) => {
 });
 
 // PATCH /partners/:id/commission
-router.patch("/:id/commission", async (req, res, next) => {
+router.patch("/:id/commission", requireSession, adminOnly, async (req, res, next) => {
   try {
     const payload = commissionSchema.parse(req.body);
-    const result = await updateCommission(req.params.id, payload);
+    const result = await updateCommission(String(req.params.id), payload);
     res.json({ data: result });
   } catch (error) {
     next(error);
@@ -109,7 +112,7 @@ router.patch("/:id/commission", async (req, res, next) => {
 });
 
 // GET /partners/referrals (list)
-router.get("/referrals/list", async (req, res, next) => {
+router.get("/referrals/list", requireSession, async (req, res, next) => {
   try {
     const referrals = await getReferrals();
     res.json({ data: referrals });
@@ -119,7 +122,7 @@ router.get("/referrals/list", async (req, res, next) => {
 });
 
 // POST /partners/referrals
-router.post("/referrals/create", async (req, res, next) => {
+router.post("/referrals/create", requireSession, async (req, res, next) => {
   try {
     const { userId } = req.body;
     if (!userId) throw new Error("User ID required");
@@ -131,7 +134,7 @@ router.post("/referrals/create", async (req, res, next) => {
 });
 
 // GET /partners/payouts
-router.get("/payouts/list", async (req, res, next) => {
+router.get("/payouts/list", requireSession, async (req, res, next) => {
   try {
     const payouts = await getPayouts();
     res.json({ data: payouts });
@@ -141,7 +144,7 @@ router.get("/payouts/list", async (req, res, next) => {
 });
 
 // POST /partners/payouts/request
-router.post("/payouts/request", async (req, res, next) => {
+router.post("/payouts/request", requireSession, async (req, res, next) => {
   try {
     const payload = payoutRequestSchema.parse(req.body);
     const result = await requestPayout(payload);
@@ -152,9 +155,9 @@ router.post("/payouts/request", async (req, res, next) => {
 });
 
 // POST /partners/payouts/:id/process
-router.post("/payouts/:id/process", async (req, res, next) => {
+router.post("/payouts/:id/process", requireSession, adminOnly, async (req, res, next) => {
   try {
-    const result = await processPayout(req.params.id);
+    const result = await processPayout(String(req.params.id));
     res.json({ data: result });
   } catch (error) {
     next(error);
@@ -162,7 +165,7 @@ router.post("/payouts/:id/process", async (req, res, next) => {
 });
 
 // PATCH /partners/branding
-router.patch("/branding", async (req, res, next) => {
+router.patch("/branding", requireSession, async (req, res, next) => {
   try {
     const payload = brandingSchema.parse(req.body);
     const result = await updateBranding(payload);

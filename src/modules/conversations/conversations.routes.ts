@@ -33,7 +33,7 @@ router.get("/", requireSession, async (req, res, next) => {
 router.get("/:id", requireSession, async (req, res, next) => {
   try {
     const conversation = await getConversation(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       prisma
     );
@@ -47,7 +47,7 @@ router.patch("/:id", requireSession, async (req, res, next) => {
   try {
     const payload = updateConversationSchema.parse(req.body);
     const conversation = await updateConversation(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       payload,
       prisma
@@ -62,7 +62,7 @@ router.post("/:id/messages", requireSession, async (req, res, next) => {
   try {
     const payload = addMessageSchema.parse(req.body);
     const message = await addMessage(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       payload,
       prisma
@@ -77,7 +77,7 @@ router.post("/:id/assign", requireSession, async (req, res, next) => {
   try {
     const payload = assignConversationSchema.parse(req.body);
     const conversation = await assignConversation(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       payload,
       prisma
@@ -92,7 +92,7 @@ router.post("/:id/notes", requireSession, async (req, res, next) => {
   try {
     const payload = addNoteSchema.parse(req.body);
     const note = await addNote(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       payload,
       prisma
@@ -106,7 +106,7 @@ router.post("/:id/notes", requireSession, async (req, res, next) => {
 router.post("/:id/mark-read", requireSession, async (req, res, next) => {
   try {
     const conversation = await markConversationAsRead(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       prisma
     );

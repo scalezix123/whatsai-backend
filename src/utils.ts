@@ -89,7 +89,6 @@ export async function getActiveMetaAuthorization(
     const auth = await prisma.metaAuthorization.findFirst({
       where: {
         workspaceId,
-        status: "active",
       },
       select: { accessToken: true },
     });
@@ -108,8 +107,8 @@ export async function getEnabledAutomationRule(
     const rule = await prisma.automationRule.findFirst({
       where: {
         workspaceId,
-        ruleType,
-        isEnabled: true,
+        ruleType: ruleType as any,
+        enabled: true,
       },
     });
     return rule;
@@ -125,6 +124,17 @@ export async function logAutomationEvent(params: {
   status: string;
   summary: string;
 }) {
-  console.log(`Automation event: ${params.ruleType} - ${params.summary}`);
-  // TODO: Implement automation event logging in Phase 1
+  try {
+    await prisma.automationEvent.create({
+      data: {
+        workspaceId: params.workspaceId,
+        ruleType: params.ruleType as any,
+        conversationId: params.conversationId || null,
+        status: params.status,
+        summary: params.summary,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to log automation event:", error);
+  }
 }

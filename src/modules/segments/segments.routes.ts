@@ -62,7 +62,7 @@ router.post("/", requireSession, async (req, res, next) => {
 
 router.get("/:id", requireSession, async (req, res, next) => {
   try {
-    const result = await getSegment(req.workspaceContext.workspaceId, req.params.id, prisma);
+    const result = await getSegment(req.workspaceContext.workspaceId, String(req.params.id), prisma);
     res.json({ data: result });
   } catch (error) {
     next(error);
@@ -74,7 +74,7 @@ router.post("/:id/preview", requireSession, async (req, res, next) => {
     const { sampleSize } = previewSegmentSchema.parse(req.body ?? {});
     const result = await previewSegment(
       req.workspaceContext.workspaceId,
-      { id: String(req.params.id), sampleSize },
+      { id: String(String(req.params.id)), sampleSize },
       prisma
     );
     res.json({ data: result });
@@ -88,7 +88,7 @@ router.patch("/:id", requireSession, async (req, res, next) => {
     const payload = updateSegmentSchema.parse(req.body);
     const result = await updateSegment(
       req.workspaceContext.workspaceId,
-      req.params.id,
+      String(req.params.id),
       payload,
       prisma
     );
@@ -100,13 +100,13 @@ router.patch("/:id", requireSession, async (req, res, next) => {
 
 router.delete("/:id", requireSession, async (req, res, next) => {
   try {
-    const result = await deleteSegment(req.workspaceContext.workspaceId, req.params.id, prisma);
+    const result = await deleteSegment(req.workspaceContext.workspaceId, String(req.params.id), prisma);
     await logAuditEvent({
       workspaceId: req.workspaceContext.workspaceId,
       actorId: req.workspaceContext.userId,
       action: "segment.deleted",
-      summary: `Segment ${req.params.id} deleted`,
-      payload: { segmentId: req.params.id },
+      summary: `Segment ${String(req.params.id)} deleted`,
+      payload: { segmentId: String(req.params.id) },
     });
     res.json({ data: result });
   } catch (error) {

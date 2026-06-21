@@ -186,9 +186,11 @@ router.post("/send-campaign", async (req, res, next) => {
 router.post("/send-reply", async (req, res, next) => {
   let workspaceId: string | null = null;
   let conversationId: string | null = null;
+  let destination: string = "unknown";
 
   try {
     const payload = metaReplySchema.parse(req.body);
+    destination = payload.to;
     const workspaceContext = await getWorkspaceContextFromRequestAuthHeader(req.headers.authorization);
     if (!workspaceContext) {
       throw new Error("An active app session is required to send WhatsApp replies.");
@@ -207,6 +209,7 @@ router.post("/send-reply", async (req, res, next) => {
           channel: "reply",
           targetType: "conversation",
           targetId: conversationId,
+          destination,
           errorMessage: getErrorMessage(error),
         });
       } catch (loggingError) {

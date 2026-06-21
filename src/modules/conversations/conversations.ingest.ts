@@ -1,5 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 import { normalizePhone } from "../contacts/contacts.service";
+import { broadcastToWorkspace } from "../realtime";
+import { evaluateAssignmentRules } from "../assignment-rules/assignment-rules.service";
+import { isWithinBusinessHours, getOffHoursMessage } from "../business-hours/business-hours.service";
+import { getEnabledAutomationRule } from "../../utils";
 
 /**
  * Shared conversation/message ingestion used by BOTH the inbound webhook handler
@@ -131,7 +135,101 @@ export async function recordInboundMessage(
     });
   }
 
+  // Auto-assign conversation based on assignment rules
+  if (!conversation.assignedTo) {
+    try {
+      const assignment = await evaluateAssignmentRules(
+        workspaceId,
+        "inbound",
+        { tags: [], source: "whatsapp_inbound" },
+        db
+      );
+      if (assignment?.targetId) {
+        await db.conversation.update({
+          where: { id: conversation.id },
+          data: { assignedTo: assignment.targetId },
+        });
+        await db.conversationEvent.create({
+          data: {
+            workspaceId,
+            conversationId: conversation.id,
+            eventType: "auto_assigned",
+            summary: `Auto-assigned to ${assignment.targetId} via assignment rules`,
+            actorName: "System",
+          },
+        });
+      }
+    } catch (error) {
+      console.error("Assignment rule evaluation failed:", error);
+    }
+  }
+
+  // Auto-reply on first inbound message if enabled
+  try {
+    const messageCount = await db.conversationMessage.count({
+      where: { conversationId: conversation.id, direction: "inbound" },
+    });
+    if (messageCount <= 1) {
+      const autoReplyRule = await getEnabledAutomationRule(workspaceId, "auto_reply_first_inbound");
+      if (autoReplyRule) {
+        const config = autoReplyRule.config as { message?: string };
+        if (config.message) {
+          broadcastToWorkspace(workspaceId, "auto_reply", {
+            conversationId: conversation.id,
+            phone,
+            message: config.message.replace("{{contact.name}}", conversation.displayName),
+          });
+          await db.conversationEvent.create({
+            data: {
+              workspaceId,
+              conversationId: conversation.id,
+              eventType: "auto_reply",
+              summary: "Auto-reply sent (first inbound message)",
+              actorName: "System",
+            },
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Auto-reply processing failed:", error);
+  }
+
+  // Check business hours and send off-hours auto-reply if configured
+  try {
+    const withinHours = await isWithinBusinessHours(workspaceId, db);
+    if (!withinHours) {
+      const offHoursMsg = await getOffHoursMessage(workspaceId, db);
+      if (offHoursMsg) {
+        broadcastToWorkspace(workspaceId, "off_hours_reply", {
+          conversationId: conversation.id,
+          phone,
+          message: offHoursMsg,
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Business hours check failed:", error);
+  }
+
+  broadcastInboundMessage(workspaceId, conversation, { id: message.id, body, sentAt });
+
   return { conversation, message, deduped: false };
+}
+
+/** Broadcast a new inbound message to connected SSE clients. */
+export function broadcastInboundMessage(workspaceId: string, conversation: { id: string; phone: string; displayName: string }, message: { id: string; body: string; sentAt: Date }) {
+  broadcastToWorkspace(workspaceId, "new_message", {
+    conversationId: conversation.id,
+    phone: conversation.phone,
+    displayName: conversation.displayName,
+    message: {
+      id: message.id,
+      body: message.body,
+      direction: "Inbound",
+      sentAt: message.sentAt.toISOString(),
+    },
+  });
 }
 
 interface OutboundMessageInput {

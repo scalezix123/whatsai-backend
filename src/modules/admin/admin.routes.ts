@@ -28,13 +28,13 @@ router.get("/users", requireSession, adminOnly, async (_req, res, next) => {
 router.patch("/users/:id/role", requireSession, adminOnly, async (req, res, next) => {
   try {
     const payload = updateUserRoleSchema.parse(req.body);
-    const user = await updateUserRoleAdmin(req.params.id, payload);
+    const user = await updateUserRoleAdmin(String(req.params.id), payload);
     await logAuditEvent({
       workspaceId: req.workspaceContext.workspaceId,
       actorId: req.workspaceContext.userId,
       action: "user.role_changed",
-      summary: `Role of user ${req.params.id} changed to ${payload.role}`,
-      payload: { targetUserId: req.params.id, role: payload.role },
+      summary: `Role of user ${String(req.params.id)} changed to ${payload.role}`,
+      payload: { targetUserId: String(req.params.id), role: payload.role },
     });
     res.json({ data: user });
   } catch (error) {
@@ -44,13 +44,13 @@ router.patch("/users/:id/role", requireSession, adminOnly, async (req, res, next
 
 router.delete("/users/:id", requireSession, adminOnly, async (req, res, next) => {
   try {
-    const result = await deleteUserAdmin(req.params.id);
+    const result = await deleteUserAdmin(String(req.params.id));
     await logAuditEvent({
       workspaceId: req.workspaceContext.workspaceId,
       actorId: req.workspaceContext.userId,
       action: "user.deleted",
-      summary: `User ${req.params.id} deleted`,
-      payload: { targetUserId: req.params.id },
+      summary: `User ${String(req.params.id)} deleted`,
+      payload: { targetUserId: String(req.params.id) },
     });
     res.json(result);
   } catch (error) {

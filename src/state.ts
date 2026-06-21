@@ -172,8 +172,8 @@ export async function createWorkspaceForUser(
           name: input.name,
           email: input.email,
           passwordHash: input.passwordHash ?? null,
-          // The workspace owner (first user) is the administrator.
-          role: "ADMIN",
+          // The workspace owner (first user) gets OWNER role.
+          role: "OWNER",
         },
       },
     },

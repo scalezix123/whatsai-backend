@@ -6,8 +6,10 @@ export const LOW_BALANCE_THRESHOLD = 500;
 export { COST_PER_MESSAGE as default };
 
 export interface User {
+  id?: string;
   name: string;
   email: string;
+  role?: string;
 }
 
 export type WhatsAppConnectionStatus = "pending" | "connected" | "disconnected";
@@ -279,6 +281,8 @@ export interface AppState {
   partnerStats: PartnerDashboardStats | null;
   partnerReferrals: PartnerReferral[];
   partnerPayouts: PartnerPayout[];
+  // Branding
+  branding: { brandName?: string; logoUrl?: string; primaryColor?: string; supportEmail?: string } | null;
 }
 
 export interface ActionResult {
@@ -370,5 +374,6 @@ export function emptyAppState(): AppState {
     partnerStats: null,
     partnerReferrals: [],
     partnerPayouts: [],
+    branding: null,
   };
 }

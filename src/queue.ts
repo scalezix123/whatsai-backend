@@ -3,16 +3,12 @@ import Bull from 'bull';
 const redisConfig = {
   host: process.env.REDIS_HOST || 'localhost',
   port: Number(process.env.REDIS_PORT || 6379),
-  retryStrategy: (times: number) => {
-    const delay = Math.min(times * 50, 2000);
-    return delay;
-  },
 };
 
-export const campaignDispatchQueue = new Bull('campaign-dispatch', redisConfig);
-export const webhookProcessQueue = new Bull('webhook-process', redisConfig);
-export const importContactsQueue = new Bull('import-contacts', redisConfig);
-export const automationTriggerQueue = new Bull('automation-trigger', redisConfig);
+export const campaignDispatchQueue = new Bull('campaign-dispatch', { redis: redisConfig });
+export const webhookProcessQueue = new Bull('webhook-process', { redis: redisConfig });
+export const importContactsQueue = new Bull('import-contacts', { redis: redisConfig });
+export const automationTriggerQueue = new Bull('automation-trigger', { redis: redisConfig });
 
 // Initialize queue event handlers
 export async function initializeQueues() {

@@ -102,6 +102,10 @@ export async function sendTemplateMessage(workspaceId: string, input: MetaSendTe
     throw new Error("No connected Meta phone number was found for this workspace.");
   }
 
+  if (!authorization?.accessToken) {
+    throw new Error("No active Meta authorization found. Please reconnect your Meta account.");
+  }
+
   const data = await sendMetaTemplateMessage({
     accessToken: authorization.accessToken,
     phoneNumberId: connection.phone_number_id,
@@ -156,6 +160,10 @@ export async function sendCampaignMessages(workspaceId: string, input: MetaSendC
 
   if (!contacts || contacts.length !== input.contactIds.length) {
     throw new Error("One or more contacts could not be found for this workspace.");
+  }
+
+  if (!authorization?.accessToken) {
+    throw new Error("No active Meta authorization found. Please reconnect your Meta account.");
   }
 
   const results = [];
@@ -252,6 +260,10 @@ export async function sendReply(workspaceId: string, input: MetaReplyInput) {
     throw new Error("Conversation not found for this workspace.");
   }
 
+  if (!authorization?.accessToken) {
+    throw new Error("No active Meta authorization found. Please reconnect your Meta account.");
+  }
+
   const data = await sendMetaTextMessage({
     accessToken: authorization.accessToken,
     phoneNumberId: connection.phone_number_id,
@@ -345,7 +357,7 @@ export function verifyWebhookSignature(
 }
 
 export function getWebhookVerifyToken(): string {
-  return getMetaWebhookVerifyToken();
+  return getMetaWebhookVerifyToken() || "";
 }
 
 // Process webhook payload

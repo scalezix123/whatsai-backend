@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { logAuditEvent } from "../../utils";
 import type {
   CreateContactInput,
   UpdateContactInput,
@@ -43,7 +44,7 @@ export async function createContact(
     throw new Error("Contact with this phone number already exists");
   }
 
-  return await db.contact.create({
+  const contact = await db.contact.create({
     data: {
       workspaceId,
       name: input.name,
@@ -52,6 +53,16 @@ export async function createContact(
       optInStatus: input.optInStatus || "unknown",
     },
   });
+
+  await logAuditEvent({
+    workspaceId,
+    actorId: "system",
+    action: "contact.created",
+    summary: `Contact created: ${input.name} (${phone})`,
+    payload: { contactId: contact.id, phone },
+  });
+
+  return contact;
 }
 
 export async function listContacts(
@@ -166,7 +177,7 @@ export async function updateContact(
     }
   }
 
-  return await db.contact.update({
+  const updated = await db.contact.update({
     where: { id },
     data: {
       name: input.name,
@@ -176,6 +187,16 @@ export async function updateContact(
     },
     include: { tags: true },
   });
+
+  await logAuditEvent({
+    workspaceId,
+    actorId: "system",
+    action: "contact.updated",
+    summary: `Contact updated: ${updated.name} (${updated.phone})`,
+    payload: { contactId: id, changes: input },
+  });
+
+  return updated;
 }
 
 export async function deleteContact(id: string, workspaceId: string, db: PrismaClient) {
@@ -186,6 +207,14 @@ export async function deleteContact(id: string, workspaceId: string, db: PrismaC
   if (!contact || contact.workspaceId !== workspaceId) {
     throw new Error("Contact not found");
   }
+
+  await logAuditEvent({
+    workspaceId,
+    actorId: "system",
+    action: "contact.deleted",
+    summary: `Contact deleted: ${contact.name} (${contact.phone})`,
+    payload: { contactId: id, phone: contact.phone },
+  });
 
   return await db.contact.delete({ where: { id } });
 }

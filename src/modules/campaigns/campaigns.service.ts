@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma, CampaignStatus } from "@prisma/client";
+import { logAuditEvent } from "../../utils";
 import type {
   CreateCampaignInput,
   ListCampaignsInput,
@@ -434,6 +435,15 @@ export async function launchCampaign(workspaceId: string, campaignId: string, db
   }
 
   await dispatchOrEnqueue(workspaceId, campaignId, db);
+
+  await logAuditEvent({
+    workspaceId,
+    actorId: "system",
+    action: "campaign.launched",
+    summary: `Campaign "${campaign.name}" launched with ${queuedCount} recipients`,
+    payload: { campaignId, recipientCount: queuedCount, estimatedCost: estimated },
+  });
+
   return getCampaign(workspaceId, campaignId, db);
 }
 

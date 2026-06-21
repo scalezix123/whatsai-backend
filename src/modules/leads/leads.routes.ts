@@ -56,7 +56,7 @@ router.get("/contact/:contactId", requireSession, async (req, res, next) => {
 
 router.get("/:id", requireSession, async (req, res, next) => {
   try {
-    const lead = await getLead(req.params.id, req.workspaceContext.workspaceId, prisma);
+    const lead = await getLead(String(req.params.id), req.workspaceContext.workspaceId, prisma);
     res.json({ data: lead });
   } catch (error) {
     next(error);
@@ -67,7 +67,7 @@ router.patch("/:id/status", requireSession, async (req, res, next) => {
   try {
     const payload = updateLeadStatusSchema.parse(req.body);
     const lead = await updateLeadStatus(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       payload,
       prisma
@@ -82,7 +82,7 @@ router.post("/:id/notes", requireSession, async (req, res, next) => {
   try {
     const payload = addLeadNoteSchema.parse(req.body);
     const lead = await addLeadNote(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       payload,
       prisma
@@ -97,7 +97,7 @@ router.post("/:id/assign", requireSession, async (req, res, next) => {
   try {
     const { userId } = assignLeadSchema.parse(req.body);
     const lead = await assignLead(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       userId,
       prisma
@@ -106,8 +106,8 @@ router.post("/:id/assign", requireSession, async (req, res, next) => {
       workspaceId: req.workspaceContext.workspaceId,
       actorId: req.workspaceContext.userId,
       action: "lead.assigned",
-      summary: userId ? `Lead ${req.params.id} assigned to ${userId}` : `Lead ${req.params.id} unassigned`,
-      payload: { leadId: req.params.id, assignedTo: userId },
+      summary: userId ? `Lead ${String(req.params.id)} assigned to ${userId}` : `Lead ${String(req.params.id)} unassigned`,
+      payload: { leadId: String(req.params.id), assignedTo: userId },
     });
     res.json({ data: lead });
   } catch (error) {

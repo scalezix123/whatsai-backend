@@ -15,39 +15,39 @@ export async function applyPartner(input: ApplyPartnerInput) {
     throw new Error("No active session. Sign in first.");
   }
 
-  const application = await prisma.partnerApplication.create({
+  const partner = await prisma.partner.create({
     data: {
       userId: user.id,
+      workspaceId: user.workspaceId,
       contactName: input.contactName,
       email: input.email,
       phone: input.phone,
       companyName: input.companyName,
       partnerType: input.partnerType,
-      message: input.message,
       status: "pending",
     },
   });
 
-  return application;
+  return partner;
 }
 
 export async function publicApplyPartner(input: PublicApplyInput) {
   const passwordHash = await hashPassword(input.password);
 
-  const application = await prisma.partnerApplication.create({
+  const partner = await prisma.partner.create({
     data: {
+      userId: "pending",
+      workspaceId: "pending",
       contactName: input.contactName,
       email: input.email,
       phone: input.phone,
       companyName: input.companyName,
       partnerType: input.partnerType,
-      message: input.message,
       status: "pending",
-      passwordHash,
     },
   });
 
-  return application;
+  return partner;
 }
 
 export async function getPartners() {
@@ -183,7 +183,9 @@ export async function createReferral(userId: string) {
   const referral = await prisma.partnerReferral.create({
     data: {
       partnerId: partner.id,
-      referredUserId: userId,
+      workspaceId: partner.workspaceId,
+      referredEmail: "pending",
+      status: "pending",
     },
   });
 
@@ -226,23 +228,24 @@ export async function requestPayout(input: PayoutRequestInput) {
     throw new Error("Partner not found.");
   }
 
-  const request = await prisma.partnerPayoutRequest.create({
+  const payout = await prisma.partnerPayout.create({
     data: {
       partnerId: partner.id,
+      workspaceId: partner.workspaceId,
       amount: input.amount,
       paymentMethod: input.paymentMethod,
-      paymentDetails: input.paymentDetails,
+      paymentDetails: JSON.stringify(input.paymentDetails),
       status: "pending",
     },
   });
 
-  return request;
+  return payout;
 }
 
 export async function processPayout(payoutId: string) {
-  const payout = await prisma.partnerPayoutRequest.update({
+  const payout = await prisma.partnerPayout.update({
     where: { id: payoutId },
-    data: { status: "processed", processedAt: new Date() },
+    data: { status: "completed", processedAt: new Date() },
   });
 
   return payout;

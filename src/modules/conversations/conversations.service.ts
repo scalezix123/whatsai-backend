@@ -6,6 +6,7 @@ import type {
   AssignConversationInput,
   AddNoteInput,
 } from "./conversations.schemas";
+import { broadcastToWorkspace } from "../realtime";
 
 export async function listConversations(
   workspaceId: string,
@@ -102,6 +103,12 @@ export async function updateConversation(
     });
   }
 
+  broadcastToWorkspace(workspaceId, "conversation_updated", {
+    conversationId: id,
+    status: updated.status,
+    assignedTo: updated.assignedTo,
+  });
+
   return updated;
 }
 
@@ -131,6 +138,16 @@ export async function addMessage(
     data: {
       lastMessagePreview: input.body.length > 140 ? `${input.body.slice(0, 137)}...` : input.body,
       lastMessageAt: new Date(),
+    },
+  });
+
+  broadcastToWorkspace(workspaceId, "new_message", {
+    conversationId,
+    message: {
+      id: message.id,
+      body: message.body,
+      direction: "Outbound",
+      sentAt: message.sentAt.toISOString(),
     },
   });
 

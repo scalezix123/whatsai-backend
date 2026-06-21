@@ -83,13 +83,6 @@ router.get("/:id/analytics", requireSession, async (req, res, next) => {
 router.post("/:id/launch", requireSession, async (req, res, next) => {
   try {
     const result = await launchCampaign(req.workspaceContext.workspaceId, req.params.id, prisma);
-    await logAuditEvent({
-      workspaceId: req.workspaceContext.workspaceId,
-      actorId: req.workspaceContext.userId,
-      action: "campaign.launched",
-      summary: `Campaign ${req.params.id} launched`,
-      payload: { campaignId: req.params.id },
-    });
     res.json({ data: result });
   } catch (error) {
     next(error);

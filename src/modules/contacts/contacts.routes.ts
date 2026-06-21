@@ -65,7 +65,7 @@ router.post("/", requireSession, async (req, res, next) => {
 
 router.get("/:id", requireSession, async (req, res, next) => {
   try {
-    const contact = await getContact(req.params.id, req.workspaceContext.workspaceId, prisma);
+    const contact = await getContact(String(req.params.id), req.workspaceContext.workspaceId, prisma);
     res.json({ data: contact });
   } catch (error) {
     next(error);
@@ -76,7 +76,7 @@ router.patch("/:id", requireSession, async (req, res, next) => {
   try {
     const payload = updateContactSchema.parse(req.body);
     const contact = await updateContact(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       payload,
       prisma
@@ -89,14 +89,7 @@ router.patch("/:id", requireSession, async (req, res, next) => {
 
 router.delete("/:id", requireSession, async (req, res, next) => {
   try {
-    await deleteContact(req.params.id, req.workspaceContext.workspaceId, prisma);
-    await logAuditEvent({
-      workspaceId: req.workspaceContext.workspaceId,
-      actorId: req.workspaceContext.userId,
-      action: "contact.deleted",
-      summary: `Contact ${req.params.id} deleted`,
-      payload: { contactId: req.params.id },
-    });
+    await deleteContact(String(req.params.id), req.workspaceContext.workspaceId, prisma);
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -130,7 +123,7 @@ router.get("/tags/list", requireSession, async (req, res, next) => {
 router.post("/:id/tags/:tagName", requireSession, async (req, res, next) => {
   try {
     const tag = await assignTagToContact(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       req.params.tagName,
       prisma
@@ -144,7 +137,7 @@ router.post("/:id/tags/:tagName", requireSession, async (req, res, next) => {
 router.delete("/:id/tags/:tagName", requireSession, async (req, res, next) => {
   try {
     await removeTagFromContact(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       req.params.tagName,
       prisma
@@ -177,7 +170,7 @@ router.post("/:id/attributes", requireSession, async (req, res, next) => {
   try {
     const payload = setAttributeValueSchema.parse(req.body);
     const value = await setContactAttribute(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       payload.attributeName,
       payload.value,
@@ -196,7 +189,7 @@ router.post("/:id/attributes", requireSession, async (req, res, next) => {
 router.post("/:id/opt-in", requireSession, async (req, res, next) => {
   try {
     const contact = await markContactOptIn(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       prisma
     );
@@ -210,7 +203,7 @@ router.post("/:id/opt-out", requireSession, async (req, res, next) => {
   try {
     const { reason } = req.body;
     const contact = await markContactOptOut(
-      req.params.id,
+      String(req.params.id),
       req.workspaceContext.workspaceId,
       reason,
       prisma
@@ -234,6 +227,34 @@ router.post("/bulk/update-opt-in", requireSession, async (req, res, next) => {
 // ============================================================================
 // CSV IMPORT ENDPOINTS
 // ============================================================================
+
+router.post("/upload-sample", requireSession, async (req, res, next) => {
+  try {
+    const workspaceId = req.workspaceContext.workspaceId;
+    const sampleContacts = [
+      { name: "Rahul Sharma", phone: "+91 98765 43210", email: "rahul@example.com" },
+      { name: "Priya Patel", phone: "+91 87654 32109", email: "priya@example.com" },
+      { name: "Amit Kumar", phone: "+91 76543 21098", email: "amit@example.com" },
+      { name: "Sneha Gupta", phone: "+91 65432 10987", email: "sneha@example.com" },
+      { name: "Vikram Singh", phone: "+91 54321 09876", email: "vikram@example.com" },
+    ];
+
+    let created = 0;
+    for (const contact of sampleContacts) {
+      const existing = await prisma.contact.findFirst({ where: { workspaceId, phone: contact.phone.replace(/[\s\-()]/g, "") } });
+      if (!existing) {
+        await prisma.contact.create({
+          data: { workspaceId, name: contact.name, phone: contact.phone.replace(/[\s\-()]/g, ""), email: contact.email, optInStatus: "unknown" },
+        });
+        created++;
+      }
+    }
+
+    res.status(201).json({ data: { created, total: sampleContacts.length } });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.post("/import/start", requireSession, async (req, res, next) => {
   try {

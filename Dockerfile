@@ -22,6 +22,10 @@ COPY prisma ./prisma/
 RUN DATABASE_URL=postgresql://placeholder:placeholder@127.0.0.1:5432/placeholder?schema=public \
   bun install
 
+# Generate Prisma client
+RUN DATABASE_URL=postgresql://placeholder:placeholder@127.0.0.1:5432/placeholder?schema=public \
+  bunx prisma generate
+
 # Copy source code
 COPY src ./src
 COPY tsconfig.json ./

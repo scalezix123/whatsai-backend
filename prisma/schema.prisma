@@ -14,9 +14,12 @@ enum Plan {
 }
 
 enum UserRole {
+  OWNER
   ADMIN
+  MANAGER
+  AGENT
+  VIEWER
   PARTNER
-  USER
 }
 
 enum Currency {
@@ -166,6 +169,20 @@ model Workspace {
   linkClicks          LinkClick[]
   segments            Segment[]
   trackedLinks        TrackedLink[]
+  teams               Team[]
+  agentProfiles       AgentProfile[]
+  cannedReplies       CannedReply[]
+  businessHours       BusinessHours[]
+  assignmentRules     AssignmentRule[]
+  aiAgent             AiAgent?
+  knowledgeDocuments  KnowledgeDocument[]
+  paymentLinks        PaymentLink[]
+  paymentTransactions PaymentTransaction[]
+  paymentGatewayConfig PaymentGatewayConfig?
+  products            Product[]
+  whatsappForms       WhatsAppForm[]
+  formSubmissions     FormSubmission[]
+  metaCapiEvents      MetaCapiEvent[]
 }
 
 model User {
@@ -174,12 +191,13 @@ model User {
   name               String
   email              String       @unique
   passwordHash       String?
-  role               UserRole     @default(USER)
+  role               UserRole     @default(AGENT)
   onboardingComplete Boolean      @default(false)
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
   workspace          Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   sessions           AppSession[]
+  agentProfile       AgentProfile?
 }
 
 model AppSession {
@@ -603,6 +621,7 @@ model AutomationFlowRun {
   status            String    @default("active")
   retryCount        Int       @default(0)
   scheduledAt       DateTime  @default(now())
+  completedAt       DateTime?
   context           Json      @default("{}")
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -720,4 +739,232 @@ model PartnerPayout {
   createdAt     DateTime       @default(now())
   partner       Partner        @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Team {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members     AgentProfile[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model AgentProfile {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  userId          String    @unique
+  teamId          String?
+  status          String    @default("offline") // online, offline, away, busy
+  skills          Json      @default("[]") // ["sales", "support", "hindi"]
+  maxConcurrentChats Int    @default(10)
+  currentChats    Int       @default(0)
+  totalResolved   Int       @default(0)
+  avgResponseTime Float?    // in seconds
+  lastActiveAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  team            Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([teamId])
+}
+
+model CannedReply {
+  id          String    @id @default(cuid())
+  workspaceId String
+  title       String
+  shortcut    String?
+  body        String
+  category    String?
+  isPublic    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, shortcut])
+}
+
+model BusinessHours {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  dayOfWeek       Int       // 0=Sunday, 6=Saturday
+  openTime        String    // "09:00"
+  closeTime       String    // "18:00"
+  isClosed        Boolean   @default(false)
+  timezone        String    @default("Asia/Kolkata")
+  welcomeMessage  String?
+  offHoursMessage String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, dayOfWeek])
+  @@index([workspaceId])
+}
+
+model AssignmentRule {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  enabled     Boolean   @default(true)
+  priority    Int       @default(0)
+  triggerType String    // "inbound", "campaign_reply", "manual"
+  conditions  Json      @default("{}") // { tags: [...], sources: [...], skills: [...] }
+  action      Json      @default("{}") // { type: "team"|"agent"|"round_robin", targetId: "..." }
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, enabled])
+}
+
+model AiAgent {
+  id              String    @id @default(cuid())
+  workspaceId     String    @unique
+  enabled         Boolean   @default(false)
+  provider        String    @default("anthropic") // anthropic, openai
+  model           String    @default("claude-sonnet-4-6")
+  apiKey          String    // encrypted
+  systemPrompt    String    @default("You are a helpful customer support agent.")
+  temperature     Float     @default(0.7)
+  maxTokens       Int       @default(1024)
+  fallbackMessage String    @default("Let me connect you with a human agent.")
+  escalationTriggers Json  @default("[\"agent\",\"human\",\"complaint\"]")
+  allowedTopics   Json      @default("[]")
+  restrictedTopics Json     @default("[]")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model KnowledgeDocument {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  title           String
+  type            String    // "url", "text", "faq"
+  content         String    // raw content or URL
+  chunks          Json      @default("[]") // array of text chunks
+  status          String    @default("pending") // pending, indexed, failed
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model PaymentGatewayConfig {
+  id              String    @id @default(cuid())
+  workspaceId     String    @unique
+  enabled         Boolean   @default(false)
+  keyId           String    @default("")
+  keySecret       String    @default("")
+  webhookSecret   String    @default("")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model PaymentLink {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  razorpayLinkId  String?
+  shortUrl        String?
+  amount          Float
+  currency        String    @default("INR")
+  description     String?
+  contactId       String?
+  conversationId  String?
+  status          String    @default("pending") // pending, paid, expired
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model PaymentTransaction {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  razorpayPaymentId String?
+  amount            Float
+  currency          String    @default("INR")
+  status            String    @default("pending") // pending, completed, failed
+  method            String?
+  createdAt         DateTime  @default(now())
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model Product {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  price       Float
+  currency    String    @default("INR")
+  sku         String?
+  imageUrl    String?
+  category    String?
+  inStock     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model WhatsAppForm {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  name          String
+  description   String?
+  fields        Json      @default("[]")
+  submitAction  String    @default("create_contact")
+  submitConfig  Json      @default("{}")
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  submissions   FormSubmission[]
+
+  @@index([workspaceId])
+}
+
+model FormSubmission {
+  id          String    @id @default(cuid())
+  workspaceId String
+  formId      String
+  data        Json      @default("{}")
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  form        WhatsAppForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  @@index([formId])
+  @@index([workspaceId])
+}
+
+model MetaCapiEvent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  eventName   String
+  pixelId     String
+  status      String    @default("pending")
+  response    Json?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }
